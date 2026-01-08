@@ -1,0 +1,44 @@
+{
+  "levels": [
+    {
+      "id": "001",
+      "name": "Level 001",
+      "image": "assets/levels/level_001.png"
+    },
+    {
+      "id": "002",
+      "name": "Level 002",
+      "image": "assets/levels/level_002.png"
+    },
+    {
+      "id": "003",
+      "name": "Level 003",
+      "image": "assets/levels/level_003.png"
+    },
+    {
+      "id": "004",
+      "name": "Level 004",
+      "image": "assets/levels/level_004.png"
+    },
+    {
+      "id": "005",
+      "name": "Level 005",
+      "image": "assets/levels/level_005.png"
+    },
+    {
+      "id": "006",
+      "name": "Level 006",
+      "image": "assets/levels/level_006.png"
+    },
+    {
+      "id": "007",
+      "name": "Level 007",
+      "image": "assets/levels/level_007.png"
+    },
+    {
+      "id": "008",
+      "name": "Level 008",
+      "image": "assets/levels/level_008.png"
+    }
+  ]
+}

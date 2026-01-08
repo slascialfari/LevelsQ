@@ -1,0 +1,26 @@
+Create a 2D side-view background for a horizontal video game level.
+
+TECHNICAL CONSTRAINTS (MANDATORY):
+- Aspect ratio: 16:9 (1280×720).
+- Camera: fixed side view, orthographic (NO perspective, NO depth vanishing points).
+- Composition:
+  - Bottom area is the ground/floor.
+  - The walkable ground line must visually align at approximately Y = 560 pixels from the top.
+  - The ground should have thickness (stones, curb, pavement, soil, etc.) extending both slightly above and below that line.
+- Do NOT include any characters, people, animals, or creatures.
+- Do NOT include portals, doors, gates, or obvious exits.
+- Background only, no foreground UI elements.
+- Clean edges, no motion blur.
+
+STYLE & RENDERING:
+Van Gogh painting style 
+
+SETTING: grass/hey/flower field
+
+MOOD:
+- Atmosphere: melancholic, lonely 
+
+ADDITIONAL RULES:
+- Keep the scene readable and not visually noisy.
+- The ground must clearly read as a surface the character can walk on.
+- The upper area should contain environmental details (buildings, clouds, structures, sky) but remain secondary to the floor alignment.
