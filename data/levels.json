@@ -3,12 +3,14 @@
     {
       "id": "001",
       "name": "Level 001",
-      "background": "assets/levels/001/background.png"
+      "background": "assets/levels/001/background.png",
+      "foreground": "assets/levels/001/foreground.png"
     },
     {
       "id": "002",
       "name": "Level 002",
-      "background": "assets/levels/002/background.png"
+      "background": "assets/levels/002/background.png",
+      "foreground": "assets/levels/002/foreground.png"
     },
     {
       "id": "003",

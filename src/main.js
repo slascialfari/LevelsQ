@@ -32,8 +32,23 @@ const FEET_FUDGE_PX = 0;
 const WALK_BOB_PX = 0; // 0 disables
 // -------------------------------------------
 
+// -------- PAN-FOLLOW (non-tiling, no seams) --------
+// Zoom > 1 creates "extra image" to pan inside without revealing edges.
+// *_FOLLOW is 0..1 follow strength (0=static, 1=full follow left/center/right)
+// subtle preset (barely noticeable)
+const BG_ZOOM = 1.05;
+const FG_ZOOM = 1.02;
+
+const BG_FOLLOW = 0.025;
+const FG_FOLLOW = 0.55;
+
+const MAX_PAN_PX = 55;
+
+
+
+// -------------------------------------------
+
 // -------- Level layer defaults (optional) ----
-// You can omit layer1/layer2 in levels.json; these are just defaults if you want.
 const DEFAULT_LAYER_FPS = 12;
 // -------------------------------------------
 
@@ -88,14 +103,45 @@ function randInt(min, maxInclusive) {
   return Math.floor(Math.random() * (maxInclusive - min + 1)) + min;
 }
 
-
 function setAnim(next) {
   if (player.anim === next) return;
   player.anim = next;
-  player.frameIndex = 0;   // IMPORTANT: avoids idleFrames[7] etc
+  player.frameIndex = 0; // avoids idleFrames[out-of-range] flicker
   player.frameTimer = 0;
 }
 
+// Returns hero position normalized to [-1, +1] across walkable range.
+// left edge => -1, center => 0, right edge => +1
+function getHeroNormalizedX() {
+  const range = Math.max(1, W - player.renderW);
+  const t = clamp(player.x / range, 0, 1); // 0..1
+  return t * 2 - 1; // -1..+1
+}
+
+// Draw zoomed image and pan inside its zoom margin.
+// followStrength: 0..1 (0 = no movement, 1 = full follow)
+function drawZoomPanFollow(img, zoom, followStrength) {
+  if (!img) return;
+
+  const drawW = W * zoom;
+  const drawH = H * zoom;
+
+  // Pan range allowed by zoom (per side)
+  const maxFromZoom = (drawW - W) / 2;
+
+  // Hard ceiling (for subtlety)
+  const maxPan = Math.min(maxFromZoom, MAX_PAN_PX);
+
+  // same direction as hero: left => negative, right => positive
+  const heroN = getHeroNormalizedX();
+  const pan = clamp(heroN * maxPan * clamp(followStrength, 0, 1), -maxPan, maxPan);
+
+  // center zoomed image then apply pan
+  const x = -(drawW - W) / 2 + pan;
+  const y = -(drawH - H) / 2;
+
+  ctx.drawImage(img, x, y, drawW, drawH);
+}
 
 // Debug: read ?debug=true&level=n (1-based) and return 0-based index, or null
 function getDebugStartLevelIndex() {
@@ -116,7 +162,6 @@ function getDebugStartLevelIndex() {
 }
 
 function warnOnce(key, msg) {
-  // simple de-dupe of console warnings
   if (!warnOnce._seen) warnOnce._seen = new Set();
   if (warnOnce._seen.has(key)) return;
   warnOnce._seen.add(key);
@@ -159,15 +204,11 @@ function loadFrameSequence(folder, count) {
 async function loadOptionalLayer(levelId, layerSpec, layerName) {
   if (!layerSpec) return null;
 
-  // Supported now:
-  // - { type: "frames", folder: "...", count: N, fps: 12 }
-  // (Future: you can add { type: "image", src: "..." } easily)
-
   const type = (layerSpec.type || "frames").toLowerCase();
 
   if (type === "frames") {
     const count = Number(layerSpec.count || 0);
-    if (!count) return null; // treat count=0 as "not provided"
+    if (!count) return null;
 
     const folder = layerSpec.folder;
     const fps = Number(layerSpec.fps || DEFAULT_LAYER_FPS);
@@ -182,15 +223,8 @@ async function loadOptionalLayer(levelId, layerSpec, layerName) {
 
     try {
       const frames = await loadFrameSequence(folder, count);
-      return {
-        kind: "frames",
-        frames,
-        fps,
-        timer: 0,
-        frameIndex: 0,
-      };
+      return { kind: "frames", frames, fps, timer: 0, frameIndex: 0 };
     } catch (e) {
-      // Optional layer: don’t fail the whole game
       warnOnce(
         `${levelId}:${layerName}:loadFail`,
         `[${levelId}] Failed to load ${layerName} frames. Skipping layer. (${e.message})`
@@ -216,7 +250,6 @@ async function loadLevels() {
     throw new Error("data/levels.json must contain { levels: [ ... ] } with at least 1 level");
   }
 
-  // Load each level’s required background; if missing => exclude that level.
   const loadedLevels = [];
   for (const lvl of json.levels) {
     const id = lvl.id || "(missing id)";
@@ -236,7 +269,6 @@ async function loadLevels() {
         try {
           fgImg = await loadImage(lvl.foreground);
         } catch (e) {
-          // Optional => warn + continue without it
           warnOnce(
             `${id}:foreground:loadFail`,
             `[${id}] Foreground failed to load; continuing without it. (${e.message})`
@@ -245,7 +277,7 @@ async function loadLevels() {
         }
       }
 
-      // Optional animated layers (frames)
+      // Optional animated layers
       const l1 = await loadOptionalLayer(lvl.id, lvl.layer1, "layer1");
       const l2 = await loadOptionalLayer(lvl.id, lvl.layer2, "layer2");
 
@@ -262,7 +294,6 @@ async function loadLevels() {
 
   levelData = loadedLevels;
 
-  // Start level: debug override if present, otherwise random
   const debugIdx = getDebugStartLevelIndex();
   state.levelIndex = debugIdx !== null ? debugIdx : randInt(0, levelData.length - 1);
 }
@@ -273,11 +304,9 @@ async function loadSprites() {
     loadFrameSequence(SPRITES.walk.folder, SPRITES.walk.count),
   ]);
 
-  // Compute render footprint
   const base = heroIdleFrames[0];
   player.renderW = Math.round(base.width * SPRITE_SCALE);
   player.renderH = Math.round(base.height * SPRITE_SCALE);
-
   player.x = clamp(player.x, 0, W - player.renderW);
 }
 
@@ -295,13 +324,13 @@ function currentLevelAssets() {
 function drawBackground() {
   const assets = currentLevelAssets();
   if (!assets?.bgImg) return;
-  ctx.drawImage(assets.bgImg, 0, 0, W, H);
+  drawZoomPanFollow(assets.bgImg, BG_ZOOM, BG_FOLLOW);
 }
 
 function drawForeground() {
   const assets = currentLevelAssets();
   if (!assets?.fgImg) return;
-  ctx.drawImage(assets.fgImg, 0, 0, W, H);
+  drawZoomPanFollow(assets.fgImg, FG_ZOOM, FG_FOLLOW);
 }
 
 function tickAndDrawOptionalLayer(layerAsset, dt) {
@@ -311,7 +340,6 @@ function tickAndDrawOptionalLayer(layerAsset, dt) {
     const frames = layerAsset.frames;
     if (!frames || frames.length === 0) return;
 
-    // advance animation
     layerAsset.timer += dt;
     const spf = 1 / Math.max(1, layerAsset.fps || DEFAULT_LAYER_FPS);
     while (layerAsset.timer >= spf) {
@@ -351,7 +379,6 @@ function drawPlayer() {
   const frames = currentFrames();
   if (!frames.length) return;
 
-  // 🔒 SAFETY: prevent disappearing when switching anims
   player.frameIndex = player.frameIndex % frames.length;
   const img = frames[player.frameIndex];
   if (!img) return;
@@ -359,7 +386,6 @@ function drawPlayer() {
   const drawW = Math.round(img.width * SPRITE_SCALE);
   const drawH = Math.round(img.height * SPRITE_SCALE);
 
-  // Walk micro-bob
   let walkBob = 0;
   if (player.anim === "walk" && WALK_BOB_PX > 0 && heroWalkFrames.length) {
     const phase = (player.frameIndex / heroWalkFrames.length) * Math.PI * 2;
@@ -385,7 +411,7 @@ function triggerEdge(edge) {
   if (state.transitioning) return;
 
   state.transitioning = true;
-  state.transitionUntil = performance.now() + 60; // very short guard
+  state.transitionUntil = performance.now() + 60;
   state.lastEdge = edge;
 
   player.visible = false;
@@ -402,10 +428,7 @@ function finishTransition() {
     player.facing = 1;
   }
 
-  player.anim = "idle";
-  player.frameIndex = 0;
-  player.frameTimer = 0;
-
+  setAnim("idle");
   player.visible = true;
   state.transitioning = false;
 }
@@ -423,11 +446,11 @@ function loop(t) {
     if (input.right) vx += 1;
 
     if (vx !== 0) player.facing = vx > 0 ? 1 : -1;
-    player.anim = vx === 0 ? "idle" : "walk";
+
+    setAnim(vx === 0 ? "idle" : "walk");
 
     player.x += vx * player.speed * dt;
 
-    // Edge trigger
     if (player.x <= 0) {
       player.x = 0;
       triggerEdge("left");
@@ -436,7 +459,6 @@ function loop(t) {
       triggerEdge("right");
     }
 
-    // Animate hero
     const fps = currentFps();
     player.frameTimer += dt;
     if (player.frameTimer >= 1 / fps) {
@@ -450,7 +472,6 @@ function loop(t) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Draw order:
   drawBackground();
   drawLayer1(dt);
   drawPlayer();
