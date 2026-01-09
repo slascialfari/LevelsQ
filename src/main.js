@@ -1,11 +1,15 @@
-// LevelQ Proto — static backgrounds + sprite hero + edge-based universe switching
-// Flash / flicker REMOVED. Transition is a clean, instant cut.
+// LevelQ Proto — layered levels (background + optional layer1 + hero + optional foreground + optional layer2)
 //
-// NEW: Debug URL params
-// - ?debug=true&level=n  -> start on level n (1-based, so level=3 => third entry in levels.json)
-//   Example: http://127.0.0.1:5500/?debug=true&level=7
+// Draw order (back -> front):
+// 1) Background (REQUIRED)
+// 2) Layer 1 (optional; frames supported)
+// 3) Hero
+// 4) Foreground (optional; transparent PNG)
+// 5) Layer 2 (optional; frames supported)
 //
-// Run via Live Server / local HTTP server.
+// IMPORTANT:
+// - If a level background is missing/unloadable, the level is excluded from the pool (game still runs).
+// - Adding new levels requires ONLY: add assets + add an entry in data/levels.json (no code changes).
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -28,11 +32,18 @@ const FEET_FUDGE_PX = 0;
 const WALK_BOB_PX = 5; // 0 disables
 // -------------------------------------------
 
-let levelData = [];
-const levelImages = new Map();
+// -------- Level layer defaults (optional) ----
+// You can omit layer1/layer2 in levels.json; these are just defaults if you want.
+const DEFAULT_LAYER_FPS = 12;
+// -------------------------------------------
 
+let levelData = []; // filtered to only valid levels after loading
 let heroIdleFrames = [];
 let heroWalkFrames = [];
+
+// Per-level loaded assets cache
+// levelAssets.get(level.id) => { bgImg, fgImg|null, l1: layerAsset|null, l2: layerAsset|null }
+const levelAssets = new Map();
 
 const state = {
   levelIndex: 0,
@@ -95,38 +106,25 @@ function getDebugStartLevelIndex() {
   return idx;
 }
 
-// ---------- Loaders ----------
-async function loadLevels() {
-  const res = await fetch("data/levels.json");
-  if (!res.ok) throw new Error(`Failed to fetch data/levels.json (${res.status})`);
-
-  const json = await res.json();
-  if (!json.levels || !Array.isArray(json.levels) || json.levels.length === 0) {
-    throw new Error("data/levels.json must contain { levels: [ ... ] } with at least 1 level");
-  }
-
-  levelData = json.levels;
-
-  await Promise.all(
-    levelData.map(
-      (lvl) =>
-        new Promise((resolve, reject) => {
-          const img = new Image();
-          img.src = lvl.image;
-          img.onload = () => {
-            levelImages.set(lvl.id, img);
-            resolve();
-          };
-          img.onerror = () => reject(new Error(`Failed to load ${lvl.image}`));
-        })
-    )
-  );
-
-  // Start level: debug override if present, otherwise random
-  const debugIdx = getDebugStartLevelIndex();
-  state.levelIndex = debugIdx !== null ? debugIdx : randInt(0, levelData.length - 1);
+function warnOnce(key, msg) {
+  // simple de-dupe of console warnings
+  if (!warnOnce._seen) warnOnce._seen = new Set();
+  if (warnOnce._seen.has(key)) return;
+  warnOnce._seen.add(key);
+  console.warn(msg);
 }
 
+// ---------- Generic image loader ----------
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = src;
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+  });
+}
+
+// ---------- Frame sequence loader (pattern = folder/frame_01.png etc) ----------
 function loadFrameSequence(folder, count) {
   const frames = [];
   const promises = [];
@@ -148,6 +146,118 @@ function loadFrameSequence(folder, count) {
   return Promise.all(promises).then(() => frames);
 }
 
+// ---------- Layer asset loader (optional) ----------
+async function loadOptionalLayer(levelId, layerSpec, layerName) {
+  if (!layerSpec) return null;
+
+  // Supported now:
+  // - { type: "frames", folder: "...", count: N, fps: 12 }
+  // (Future: you can add { type: "image", src: "..." } easily)
+
+  const type = (layerSpec.type || "frames").toLowerCase();
+
+  if (type === "frames") {
+    const count = Number(layerSpec.count || 0);
+    if (!count) return null; // treat count=0 as "not provided"
+
+    const folder = layerSpec.folder;
+    const fps = Number(layerSpec.fps || DEFAULT_LAYER_FPS);
+
+    if (!folder) {
+      warnOnce(
+        `${levelId}:${layerName}:missingFolder`,
+        `[${levelId}] ${layerName} has type=frames but is missing "folder". Skipping.`
+      );
+      return null;
+    }
+
+    try {
+      const frames = await loadFrameSequence(folder, count);
+      return {
+        kind: "frames",
+        frames,
+        fps,
+        timer: 0,
+        frameIndex: 0,
+      };
+    } catch (e) {
+      // Optional layer: don’t fail the whole game
+      warnOnce(
+        `${levelId}:${layerName}:loadFail`,
+        `[${levelId}] Failed to load ${layerName} frames. Skipping layer. (${e.message})`
+      );
+      return null;
+    }
+  }
+
+  warnOnce(
+    `${levelId}:${layerName}:unsupportedType`,
+    `[${levelId}] ${layerName} has unsupported type="${layerSpec.type}". Skipping.`
+  );
+  return null;
+}
+
+// ---------- Loaders ----------
+async function loadLevels() {
+  const res = await fetch("data/levels.json");
+  if (!res.ok) throw new Error(`Failed to fetch data/levels.json (${res.status})`);
+
+  const json = await res.json();
+  if (!json.levels || !Array.isArray(json.levels) || json.levels.length === 0) {
+    throw new Error("data/levels.json must contain { levels: [ ... ] } with at least 1 level");
+  }
+
+  // Load each level’s required background; if missing => exclude that level.
+  const loadedLevels = [];
+  for (const lvl of json.levels) {
+    const id = lvl.id || "(missing id)";
+    const bgSrc = lvl.background;
+
+    if (!bgSrc) {
+      console.warn(`[${id}] Missing required "background" field. Level excluded.`);
+      continue;
+    }
+
+    try {
+      const bgImg = await loadImage(bgSrc);
+
+      // Optional foreground
+      let fgImg = null;
+      if (lvl.foreground) {
+        try {
+          fgImg = await loadImage(lvl.foreground);
+        } catch (e) {
+          // Optional => warn + continue without it
+          warnOnce(
+            `${id}:foreground:loadFail`,
+            `[${id}] Foreground failed to load; continuing without it. (${e.message})`
+          );
+          fgImg = null;
+        }
+      }
+
+      // Optional animated layers (frames)
+      const l1 = await loadOptionalLayer(lvl.id, lvl.layer1, "layer1");
+      const l2 = await loadOptionalLayer(lvl.id, lvl.layer2, "layer2");
+
+      loadedLevels.push(lvl);
+      levelAssets.set(lvl.id, { bgImg, fgImg, l1, l2 });
+    } catch (e) {
+      console.warn(`[${id}] Background failed to load. Level excluded. (${e.message})`);
+    }
+  }
+
+  if (loadedLevels.length === 0) {
+    throw new Error("No valid levels loaded. Check that each level has a valid background image.");
+  }
+
+  levelData = loadedLevels;
+
+  // Start level: debug override if present, otherwise random
+  const debugIdx = getDebugStartLevelIndex();
+  state.levelIndex = debugIdx !== null ? debugIdx : randInt(0, levelData.length - 1);
+}
+
 async function loadSprites() {
   [heroIdleFrames, heroWalkFrames] = await Promise.all([
     loadFrameSequence(SPRITES.idle.folder, SPRITES.idle.count),
@@ -162,17 +272,59 @@ async function loadSprites() {
   player.x = clamp(player.x, 0, W - player.renderW);
 }
 
-// ---------- Level ----------
+// ---------- Level rendering ----------
 function currentLevel() {
   return levelData[state.levelIndex];
 }
 
-function drawLevelBackground() {
+function currentLevelAssets() {
   const lvl = currentLevel();
-  if (!lvl) return;
+  if (!lvl) return null;
+  return levelAssets.get(lvl.id) || null;
+}
 
-  const img = levelImages.get(lvl.id);
-  if (img) ctx.drawImage(img, 0, 0, W, H);
+function drawBackground() {
+  const assets = currentLevelAssets();
+  if (!assets?.bgImg) return;
+  ctx.drawImage(assets.bgImg, 0, 0, W, H);
+}
+
+function drawForeground() {
+  const assets = currentLevelAssets();
+  if (!assets?.fgImg) return;
+  ctx.drawImage(assets.fgImg, 0, 0, W, H);
+}
+
+function tickAndDrawOptionalLayer(layerAsset, dt) {
+  if (!layerAsset) return;
+
+  if (layerAsset.kind === "frames") {
+    const frames = layerAsset.frames;
+    if (!frames || frames.length === 0) return;
+
+    // advance animation
+    layerAsset.timer += dt;
+    const spf = 1 / Math.max(1, layerAsset.fps || DEFAULT_LAYER_FPS);
+    while (layerAsset.timer >= spf) {
+      layerAsset.timer -= spf;
+      layerAsset.frameIndex = (layerAsset.frameIndex + 1) % frames.length;
+    }
+
+    const img = frames[layerAsset.frameIndex];
+    if (img) ctx.drawImage(img, 0, 0, W, H);
+  }
+}
+
+function drawLayer1(dt) {
+  const assets = currentLevelAssets();
+  if (!assets?.l1) return;
+  tickAndDrawOptionalLayer(assets.l1, dt);
+}
+
+function drawLayer2(dt) {
+  const assets = currentLevelAssets();
+  if (!assets?.l2) return;
+  tickAndDrawOptionalLayer(assets.l2, dt);
 }
 
 // ---------- Player ----------
@@ -271,7 +423,7 @@ function loop(t) {
       triggerEdge("right");
     }
 
-    // Animate
+    // Animate hero
     const fps = currentFps();
     player.frameTimer += dt;
     if (player.frameTimer >= 1 / fps) {
@@ -284,8 +436,13 @@ function loop(t) {
   }
 
   ctx.clearRect(0, 0, W, H);
-  drawLevelBackground();
+
+  // Draw order:
+  drawBackground();
+  drawLayer1(dt);
   drawPlayer();
+  drawForeground();
+  drawLayer2(dt);
 
   requestAnimationFrame(loop);
 }
