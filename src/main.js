@@ -20,16 +20,16 @@ const H = canvas.height;
 // Logical floor (never drawn)
 const FLOOR_Y = 600;
 
-// Sprite config
+// Sprite config (CUSTOM HERO)
 const SPRITES = {
-  idle: { folder: "assets/sprites/hero_idle_12f", count: 4, fps: 8 },
-  walk: { folder: "assets/sprites/hero_walk_12f", count: 6, fps: 12 },
+  idle: { folder: "assets/sprites/hero_idle_custom", count: 1, fps: 1 },
+  walk: { folder: "assets/sprites/hero_walk_custom", count: 8, fps: 12 },
 };
 
 // -------- TWEAKABLE VISUAL CONSTANTS --------
-const SPRITE_SCALE = 3.5;
+const SPRITE_SCALE = 0.32;
 const FEET_FUDGE_PX = 0;
-const WALK_BOB_PX = 5; // 0 disables
+const WALK_BOB_PX = 0; // 0 disables
 // -------------------------------------------
 
 // -------- Level layer defaults (optional) ----
@@ -54,7 +54,7 @@ const state = {
 
 const player = {
   x: Math.floor(W / 2),
-  speed: 260,
+  speed: 90,
   visible: true,
 
   facing: 1,
@@ -87,6 +87,15 @@ function clamp(v, min, max) {
 function randInt(min, maxInclusive) {
   return Math.floor(Math.random() * (maxInclusive - min + 1)) + min;
 }
+
+
+function setAnim(next) {
+  if (player.anim === next) return;
+  player.anim = next;
+  player.frameIndex = 0;   // IMPORTANT: avoids idleFrames[7] etc
+  player.frameTimer = 0;
+}
+
 
 // Debug: read ?debug=true&level=n (1-based) and return 0-based index, or null
 function getDebugStartLevelIndex() {
@@ -340,6 +349,10 @@ function drawPlayer() {
   if (!player.visible) return;
 
   const frames = currentFrames();
+  if (!frames.length) return;
+
+  // 🔒 SAFETY: prevent disappearing when switching anims
+  player.frameIndex = player.frameIndex % frames.length;
   const img = frames[player.frameIndex];
   if (!img) return;
 
