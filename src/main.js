@@ -65,6 +65,11 @@ const state = {
   transitioning: false,
   transitionUntil: 0,
   lastEdge: null, // "left" | "right"
+
+  // Session carousel (built as the player explores left/right)
+  // carousel contains *indexes into levelData* in the order discovered.
+  carousel: [],
+  carouselPos: 0,
 };
 
 const player = {
@@ -101,6 +106,81 @@ function clamp(v, min, max) {
 
 function randInt(min, maxInclusive) {
   return Math.floor(Math.random() * (maxInclusive - min + 1)) + min;
+}
+
+
+// ---------- Session carousel (level selection with memory) ----------
+// Initialize the carousel for a fresh page load.
+function initCarousel(startLevelIndex) {
+  state.carousel = [startLevelIndex];
+  state.carouselPos = 0;
+}
+
+// Pick a random level index that is NOT already in the carousel.
+// Assumes there is at least one unused level.
+function pickUnusedLevelIndex() {
+  const used = new Set(state.carousel);
+  const unused = [];
+  for (let i = 0; i < levelData.length; i++) {
+    if (!used.has(i)) unused.push(i);
+  }
+  // Fallback safety (shouldn't happen if caller checks availability)
+  if (unused.length === 0) return state.carousel[state.carouselPos] ?? 0;
+  return unused[randInt(0, unused.length - 1)];
+}
+
+// Move right in the carousel:
+// - If we've already discovered a "next" level, just go there.
+// - Otherwise, discover a new random unused level and append it.
+// - Once all levels are discovered, wrap around in a loop.
+function carouselMoveRight() {
+  if (levelData.length <= 1) return state.levelIndex;
+
+  const allUsed = state.carousel.length >= levelData.length;
+
+  if (allUsed) {
+    state.carouselPos = (state.carouselPos + 1) % state.carousel.length;
+    return state.carousel[state.carouselPos];
+  }
+
+  // Not all used yet
+  if (state.carouselPos < state.carousel.length - 1) {
+    state.carouselPos += 1;
+    return state.carousel[state.carouselPos];
+  }
+
+  // At the end of discovered chain: discover a new level
+  const nextIdx = pickUnusedLevelIndex();
+  state.carousel.push(nextIdx);
+  state.carouselPos = state.carousel.length - 1;
+  return nextIdx;
+}
+
+// Move left in the carousel:
+// - If we've already discovered a "previous" level, just go there.
+// - Otherwise, discover a new random unused level and prepend it.
+// - Once all levels are discovered, wrap around in a loop.
+function carouselMoveLeft() {
+  if (levelData.length <= 1) return state.levelIndex;
+
+  const allUsed = state.carousel.length >= levelData.length;
+
+  if (allUsed) {
+    state.carouselPos = (state.carouselPos - 1 + state.carousel.length) % state.carousel.length;
+    return state.carousel[state.carouselPos];
+  }
+
+  // Not all used yet
+  if (state.carouselPos > 0) {
+    state.carouselPos -= 1;
+    return state.carousel[state.carouselPos];
+  }
+
+  // At the start of discovered chain: discover a new level on the left
+  const prevIdx = pickUnusedLevelIndex();
+  state.carousel.unshift(prevIdx);
+  state.carouselPos = 0; // still at the first element (the newly discovered one)
+  return prevIdx;
 }
 
 function setAnim(next) {
@@ -295,7 +375,9 @@ async function loadLevels() {
   levelData = loadedLevels;
 
   const debugIdx = getDebugStartLevelIndex();
-  state.levelIndex = debugIdx !== null ? debugIdx : randInt(0, levelData.length - 1);
+  const startIdx = debugIdx !== null ? debugIdx : randInt(0, levelData.length - 1);
+  state.levelIndex = startIdx;
+  initCarousel(startIdx);
 }
 
 async function loadSprites() {
@@ -418,7 +500,12 @@ function triggerEdge(edge) {
 }
 
 function finishTransition() {
-  state.levelIndex = randInt(0, levelData.length - 1);
+  // Pick next level based on the session carousel logic
+  if (state.lastEdge === "left") {
+    state.levelIndex = carouselMoveLeft();
+  } else {
+    state.levelIndex = carouselMoveRight();
+  }
 
   if (state.lastEdge === "left") {
     player.x = W - player.renderW - 2;
