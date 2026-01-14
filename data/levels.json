@@ -17,6 +17,18 @@
       "name": "Level 003",
       "background": "assets/levels/003/background.PNG",
       "foreground": "assets/levels/003/foreground.PNG"
+    },
+    {
+      "id": "004",
+      "name": "Level 004",
+      "background": "assets/levels/004/background.png",
+      "foreground": "assets/levels/004/foreground.png",
+      "layer1": {
+        "type": "frames",
+        "folder": "assets/levels/004/layer1",
+        "count": 36,
+        "fps": 12
+      }
     }
   ]
 }
