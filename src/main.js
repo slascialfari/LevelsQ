@@ -20,10 +20,20 @@ const H = canvas.height;
 // Logical floor (never drawn)
 const FLOOR_Y = 600;
 
-// Sprite config (CUSTOM HERO)
+// =========================
+// SPRITES (FRAME-AGNOSTIC)
+// =========================
+// Keep folder names stable. Drop frames in the folder.
+// Loader auto-detects frame_01.png, frame_02.png, ... until missing.
 const SPRITES = {
-  idle: { folder: "assets/sprites/hero_idle_custom", count: 1, fps: 1 },
-  walk: { folder: "assets/sprites/hero_walk_custom", count: 8, fps: 12 },
+  idle: {
+    folder: "assets/sprites/hero_idle",
+    fps: 6, // calm idle
+  },
+  walk: {
+    folder: "assets/sprites/hero_walk",
+    fps: 12,
+  },
 };
 
 // -------- TWEAKABLE VISUAL CONSTANTS --------
@@ -35,7 +45,6 @@ const WALK_BOB_PX = 0; // 0 disables
 // -------- PAN-FOLLOW (non-tiling, no seams) --------
 // Zoom > 1 creates "extra image" to pan inside without revealing edges.
 // *_FOLLOW is 0..1 follow strength (0=static, 1=full follow left/center/right)
-// subtle preset (barely noticeable)
 const BG_ZOOM = 1.05;
 const FG_ZOOM = 1.02;
 
@@ -43,9 +52,6 @@ const BG_FOLLOW = 0.025;
 const FG_FOLLOW = 0.55;
 
 const MAX_PAN_PX = 55;
-
-
-
 // -------------------------------------------
 
 // -------- Level layer defaults (optional) ----
@@ -108,31 +114,22 @@ function randInt(min, maxInclusive) {
   return Math.floor(Math.random() * (maxInclusive - min + 1)) + min;
 }
 
-
 // ---------- Session carousel (level selection with memory) ----------
-// Initialize the carousel for a fresh page load.
 function initCarousel(startLevelIndex) {
   state.carousel = [startLevelIndex];
   state.carouselPos = 0;
 }
 
-// Pick a random level index that is NOT already in the carousel.
-// Assumes there is at least one unused level.
 function pickUnusedLevelIndex() {
   const used = new Set(state.carousel);
   const unused = [];
   for (let i = 0; i < levelData.length; i++) {
     if (!used.has(i)) unused.push(i);
   }
-  // Fallback safety (shouldn't happen if caller checks availability)
   if (unused.length === 0) return state.carousel[state.carouselPos] ?? 0;
   return unused[randInt(0, unused.length - 1)];
 }
 
-// Move right in the carousel:
-// - If we've already discovered a "next" level, just go there.
-// - Otherwise, discover a new random unused level and append it.
-// - Once all levels are discovered, wrap around in a loop.
 function carouselMoveRight() {
   if (levelData.length <= 1) return state.levelIndex;
 
@@ -143,55 +140,47 @@ function carouselMoveRight() {
     return state.carousel[state.carouselPos];
   }
 
-  // Not all used yet
   if (state.carouselPos < state.carousel.length - 1) {
     state.carouselPos += 1;
     return state.carousel[state.carouselPos];
   }
 
-  // At the end of discovered chain: discover a new level
   const nextIdx = pickUnusedLevelIndex();
   state.carousel.push(nextIdx);
   state.carouselPos = state.carousel.length - 1;
   return nextIdx;
 }
 
-// Move left in the carousel:
-// - If we've already discovered a "previous" level, just go there.
-// - Otherwise, discover a new random unused level and prepend it.
-// - Once all levels are discovered, wrap around in a loop.
 function carouselMoveLeft() {
   if (levelData.length <= 1) return state.levelIndex;
 
   const allUsed = state.carousel.length >= levelData.length;
 
   if (allUsed) {
-    state.carouselPos = (state.carouselPos - 1 + state.carousel.length) % state.carousel.length;
+    state.carouselPos =
+      (state.carouselPos - 1 + state.carousel.length) % state.carousel.length;
     return state.carousel[state.carouselPos];
   }
 
-  // Not all used yet
   if (state.carouselPos > 0) {
     state.carouselPos -= 1;
     return state.carousel[state.carouselPos];
   }
 
-  // At the start of discovered chain: discover a new level on the left
   const prevIdx = pickUnusedLevelIndex();
   state.carousel.unshift(prevIdx);
-  state.carouselPos = 0; // still at the first element (the newly discovered one)
+  state.carouselPos = 0;
   return prevIdx;
 }
 
 function setAnim(next) {
   if (player.anim === next) return;
   player.anim = next;
-  player.frameIndex = 0; // avoids idleFrames[out-of-range] flicker
+  player.frameIndex = 0; // avoids out-of-range on swap
   player.frameTimer = 0;
 }
 
 // Returns hero position normalized to [-1, +1] across walkable range.
-// left edge => -1, center => 0, right edge => +1
 function getHeroNormalizedX() {
   const range = Math.max(1, W - player.renderW);
   const t = clamp(player.x / range, 0, 1); // 0..1
@@ -199,31 +188,29 @@ function getHeroNormalizedX() {
 }
 
 // Draw zoomed image and pan inside its zoom margin.
-// followStrength: 0..1 (0 = no movement, 1 = full follow)
 function drawZoomPanFollow(img, zoom, followStrength) {
   if (!img) return;
 
   const drawW = W * zoom;
   const drawH = H * zoom;
 
-  // Pan range allowed by zoom (per side)
   const maxFromZoom = (drawW - W) / 2;
-
-  // Hard ceiling (for subtlety)
   const maxPan = Math.min(maxFromZoom, MAX_PAN_PX);
 
-  // same direction as hero: left => negative, right => positive
   const heroN = getHeroNormalizedX();
-  const pan = clamp(heroN * maxPan * clamp(followStrength, 0, 1), -maxPan, maxPan);
+  const pan = clamp(
+    heroN * maxPan * clamp(followStrength, 0, 1),
+    -maxPan,
+    maxPan
+  );
 
-  // center zoomed image then apply pan
   const x = -(drawW - W) / 2 + pan;
   const y = -(drawH - H) / 2;
 
   ctx.drawImage(img, x, y, drawW, drawH);
 }
 
-// Debug: read ?debug=true&level=n (1-based) and return 0-based index, or null
+// Debug: read ?debug=true&level=n (1-based)
 function getDebugStartLevelIndex() {
   const params = new URLSearchParams(window.location.search);
   const debug = (params.get("debug") || "").toLowerCase() === "true";
@@ -235,7 +222,7 @@ function getDebugStartLevelIndex() {
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 1) return null;
 
-  const idx = n - 1; // convert to 0-based index
+  const idx = n - 1;
   if (!levelData || idx >= levelData.length) return null;
 
   return idx;
@@ -258,8 +245,43 @@ function loadImage(src) {
   });
 }
 
-// ---------- Frame sequence loader (pattern = folder/frame_01.png etc) ----------
-function loadFrameSequence(folder, count) {
+// =====================================================
+// Frame sequence loaders
+// =====================================================
+
+// (A) Auto-detect hero frames: folder/frame_01.png, frame_02.png, ...
+// Stops on the first missing frame.
+// NOTE: requires contiguous numbering (no gaps).
+async function loadFrameSequenceAuto(folder, { prefix = "frame_", start = 1, pad = 2 } = {}) {
+  const frames = [];
+  let i = start;
+
+  while (true) {
+    const n = String(i).padStart(pad, "0");
+    const src = `${folder}/${prefix}${n}.png`;
+    try {
+      const img = await loadImage(src);
+      frames.push(img);
+      i++;
+    } catch {
+      break; // stop at first missing frame
+    }
+  }
+
+  if (frames.length === 0) {
+    throw new Error(
+      `No frames found in "${folder}". Expected files like ${folder}/${prefix}${String(start).padStart(
+        pad,
+        "0"
+      )}.png`
+    );
+  }
+
+  return frames;
+}
+
+// (B) Count-based loader for LEVEL optional layers (keep as-is)
+function loadFrameSequenceCounted(folder, count) {
   const frames = [];
   const promises = [];
 
@@ -302,7 +324,7 @@ async function loadOptionalLayer(levelId, layerSpec, layerName) {
     }
 
     try {
-      const frames = await loadFrameSequence(folder, count);
+      const frames = await loadFrameSequenceCounted(folder, count);
       return { kind: "frames", frames, fps, timer: 0, frameIndex: 0 };
     } catch (e) {
       warnOnce(
@@ -381,11 +403,13 @@ async function loadLevels() {
 }
 
 async function loadSprites() {
+  // AUTO-DETECT: frame_01.png, frame_02.png, ... until missing
   [heroIdleFrames, heroWalkFrames] = await Promise.all([
-    loadFrameSequence(SPRITES.idle.folder, SPRITES.idle.count),
-    loadFrameSequence(SPRITES.walk.folder, SPRITES.walk.count),
+    loadFrameSequenceAuto(SPRITES.idle.folder, { prefix: "frame_", start: 1, pad: 2 }),
+    loadFrameSequenceAuto(SPRITES.walk.folder, { prefix: "frame_", start: 1, pad: 2 }),
   ]);
 
+  // Use first idle frame to set collision/render footprint
   const base = heroIdleFrames[0];
   player.renderW = Math.round(base.width * SPRITE_SCALE);
   player.renderH = Math.round(base.height * SPRITE_SCALE);
@@ -500,7 +524,6 @@ function triggerEdge(edge) {
 }
 
 function finishTransition() {
-  // Pick next level based on the session carousel logic
   if (state.lastEdge === "left") {
     state.levelIndex = carouselMoveLeft();
   } else {
