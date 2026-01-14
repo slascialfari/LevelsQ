@@ -37,7 +37,7 @@ const SPRITES = {
 };
 
 // -------- TWEAKABLE VISUAL CONSTANTS --------
-const SPRITE_SCALE = 0.32;
+const SPRITE_SCALE = 0.34;
 const FEET_FUDGE_PX = 0;
 const WALK_BOB_PX = 0; // 0 disables
 // -------------------------------------------
