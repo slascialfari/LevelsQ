@@ -1,15 +1,15 @@
-// LevelQ Proto — layered levels (background + optional layer1 + hero + optional foreground + optional layer2)
+// LevelQ Proto — layered levels
 //
 // Draw order (back -> front):
-// 1) Background (REQUIRED)
-// 2) Layer 1 (optional; frames supported)
+// 1) Background (REQUIRED)            [zoom+pan follow]
+// 2) Layer 1 (optional)               [can be image or frames; can align to BG]
 // 3) Hero
-// 4) Foreground (optional; transparent PNG)
-// 5) Layer 2 (optional; frames supported)
+// 4) Layer 2 (optional)               [can be image or frames; can align to BG]  <-- in front of hero
+// 5) Foreground (optional; TRUE FG)   [zoom+pan follow; the ONLY parallax layer]
 //
-// IMPORTANT:
-// - If a level background is missing/unloadable, the level is excluded from the pool (game still runs).
-// - Adding new levels requires ONLY: add assets + add an entry in data/levels.json (no code changes).
+// Key idea:
+// - If a layer must overlap the background perfectly -> set align:"bg" in levels.json
+// - If you want "true parallax close to viewer" -> use `foreground`
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -21,19 +21,11 @@ const H = canvas.height;
 const FLOOR_Y = 600;
 
 // =========================
-// SPRITES (FRAME-AGNOSTIC)
+// SPRITES
 // =========================
-// Keep folder names stable. Drop frames in the folder.
-// Loader auto-detects frame_01.png, frame_02.png, ... until missing.
 const SPRITES = {
-  idle: {
-    folder: "assets/sprites/hero_idle",
-    fps: 6, // calm idle
-  },
-  walk: {
-    folder: "assets/sprites/hero_walk",
-    fps: 12,
-  },
+  idle: { folder: "assets/sprites/hero_idle", fps: 6 },
+  walk: { folder: "assets/sprites/hero_walk", fps: 12 },
 };
 
 // -------- TWEAKABLE VISUAL CONSTANTS --------
@@ -44,7 +36,6 @@ const WALK_BOB_PX = 0; // 0 disables
 
 // -------- PAN-FOLLOW (non-tiling, no seams) --------
 // Zoom > 1 creates "extra image" to pan inside without revealing edges.
-// *_FOLLOW is 0..1 follow strength (0=static, 1=full follow left/center/right)
 const BG_ZOOM = 1.05;
 const FG_ZOOM = 1.02;
 
@@ -54,26 +45,21 @@ const FG_FOLLOW = 0.55;
 const MAX_PAN_PX = 55;
 // -------------------------------------------
 
-// -------- Level layer defaults (optional) ----
 const DEFAULT_LAYER_FPS = 12;
-// -------------------------------------------
 
-let levelData = []; // filtered to only valid levels after loading
+let levelData = [];
 let heroIdleFrames = [];
 let heroWalkFrames = [];
 
-// Per-level loaded assets cache
-// levelAssets.get(level.id) => { bgImg, fgImg|null, l1: layerAsset|null, l2: layerAsset|null }
+// levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null }
 const levelAssets = new Map();
 
 const state = {
   levelIndex: 0,
   transitioning: false,
   transitionUntil: 0,
-  lastEdge: null, // "left" | "right"
+  lastEdge: null,
 
-  // Session carousel (built as the player explores left/right)
-  // carousel contains *indexes into levelData* in the order discovered.
   carousel: [],
   carouselPos: 0,
 };
@@ -82,13 +68,10 @@ const player = {
   x: Math.floor(W / 2),
   speed: 90,
   visible: true,
-
   facing: 1,
   anim: "idle",
   frameIndex: 0,
   frameTimer: 0,
-
-  // Render footprint (computed after sprites load)
   renderW: 26,
   renderH: 56,
 };
@@ -114,7 +97,14 @@ function randInt(min, maxInclusive) {
   return Math.floor(Math.random() * (maxInclusive - min + 1)) + min;
 }
 
-// ---------- Session carousel (level selection with memory) ----------
+function warnOnce(key, msg) {
+  if (!warnOnce._seen) warnOnce._seen = new Set();
+  if (warnOnce._seen.has(key)) return;
+  warnOnce._seen.add(key);
+  console.warn(msg);
+}
+
+// ---------- Carousel ----------
 function initCarousel(startLevelIndex) {
   state.carousel = [startLevelIndex];
   state.carouselPos = 0;
@@ -123,9 +113,7 @@ function initCarousel(startLevelIndex) {
 function pickUnusedLevelIndex() {
   const used = new Set(state.carousel);
   const unused = [];
-  for (let i = 0; i < levelData.length; i++) {
-    if (!used.has(i)) unused.push(i);
-  }
+  for (let i = 0; i < levelData.length; i++) if (!used.has(i)) unused.push(i);
   if (unused.length === 0) return state.carousel[state.carouselPos] ?? 0;
   return unused[randInt(0, unused.length - 1)];
 }
@@ -176,18 +164,18 @@ function carouselMoveLeft() {
 function setAnim(next) {
   if (player.anim === next) return;
   player.anim = next;
-  player.frameIndex = 0; // avoids out-of-range on swap
+  player.frameIndex = 0;
   player.frameTimer = 0;
 }
 
-// Returns hero position normalized to [-1, +1] across walkable range.
+// Returns hero position normalized to [-1, +1]
 function getHeroNormalizedX() {
   const range = Math.max(1, W - player.renderW);
-  const t = clamp(player.x / range, 0, 1); // 0..1
-  return t * 2 - 1; // -1..+1
+  const t = clamp(player.x / range, 0, 1);
+  return t * 2 - 1;
 }
 
-// Draw zoomed image and pan inside its zoom margin.
+// Zoom+pan draw (used for BG + TRUE foreground + optionally aligned layers)
 function drawZoomPanFollow(img, zoom, followStrength) {
   if (!img) return;
 
@@ -210,32 +198,7 @@ function drawZoomPanFollow(img, zoom, followStrength) {
   ctx.drawImage(img, x, y, drawW, drawH);
 }
 
-// Debug: read ?debug=true&level=n (1-based)
-function getDebugStartLevelIndex() {
-  const params = new URLSearchParams(window.location.search);
-  const debug = (params.get("debug") || "").toLowerCase() === "true";
-  if (!debug) return null;
-
-  const raw = params.get("level");
-  if (!raw) return null;
-
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return null;
-
-  const idx = n - 1;
-  if (!levelData || idx >= levelData.length) return null;
-
-  return idx;
-}
-
-function warnOnce(key, msg) {
-  if (!warnOnce._seen) warnOnce._seen = new Set();
-  if (warnOnce._seen.has(key)) return;
-  warnOnce._seen.add(key);
-  console.warn(msg);
-}
-
-// ---------- Generic image loader ----------
+// ---------- Loaders ----------
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -245,13 +208,7 @@ function loadImage(src) {
   });
 }
 
-// =====================================================
-// Frame sequence loaders
-// =====================================================
-
-// (A) Auto-detect hero frames: folder/frame_01.png, frame_02.png, ...
-// Stops on the first missing frame.
-// NOTE: requires contiguous numbering (no gaps).
+// Auto-detect hero frames: folder/frame_01.png, frame_02.png, ... until missing
 async function loadFrameSequenceAuto(folder, { prefix = "frame_", start = 1, pad = 2 } = {}) {
   const frames = [];
   let i = start;
@@ -264,23 +221,20 @@ async function loadFrameSequenceAuto(folder, { prefix = "frame_", start = 1, pad
       frames.push(img);
       i++;
     } catch {
-      break; // stop at first missing frame
+      break;
     }
   }
 
   if (frames.length === 0) {
     throw new Error(
-      `No frames found in "${folder}". Expected files like ${folder}/${prefix}${String(start).padStart(
-        pad,
-        "0"
-      )}.png`
+      `No frames found in "${folder}". Expected files like ${folder}/${prefix}${String(start).padStart(pad, "0")}.png`
     );
   }
 
   return frames;
 }
 
-// (B) Count-based loader for LEVEL optional layers (keep as-is)
+// Count-based loader for level frame layers
 function loadFrameSequenceCounted(folder, count) {
   const frames = [];
   const promises = [];
@@ -302,11 +256,43 @@ function loadFrameSequenceCounted(folder, count) {
   return Promise.all(promises).then(() => frames);
 }
 
-// ---------- Layer asset loader (optional) ----------
+/**
+ * Optional layer spec supports:
+ * - { type:"frames", folder:"...", count: N, fps: 12, align:"bg"|"screen" }
+ * - { type:"image",  src:"...", align:"bg"|"screen" }
+ *
+ * align:
+ * - "bg"     => draw with same zoom+pan as background (perfect overlap)
+ * - "screen" => draw raw at (0,0,W,H)
+ */
 async function loadOptionalLayer(levelId, layerSpec, layerName) {
   if (!layerSpec) return null;
 
-  const type = (layerSpec.type || "frames").toLowerCase();
+  const type = String(layerSpec.type || "frames").toLowerCase();
+  const align = String(layerSpec.align || "screen").toLowerCase(); // default "screen"
+  const safeAlign = align === "bg" ? "bg" : "screen";
+
+  if (type === "image") {
+    const src = layerSpec.src;
+    if (!src) {
+      warnOnce(
+        `${levelId}:${layerName}:missingSrc`,
+        `[${levelId}] ${layerName} type=image is missing "src". Skipping.`
+      );
+      return null;
+    }
+
+    try {
+      const img = await loadImage(src);
+      return { kind: "image", img, align: safeAlign };
+    } catch (e) {
+      warnOnce(
+        `${levelId}:${layerName}:loadFail`,
+        `[${levelId}] Failed to load ${layerName} image. Skipping. (${e.message})`
+      );
+      return null;
+    }
+  }
 
   if (type === "frames") {
     const count = Number(layerSpec.count || 0);
@@ -318,18 +304,18 @@ async function loadOptionalLayer(levelId, layerSpec, layerName) {
     if (!folder) {
       warnOnce(
         `${levelId}:${layerName}:missingFolder`,
-        `[${levelId}] ${layerName} has type=frames but is missing "folder". Skipping.`
+        `[${levelId}] ${layerName} type=frames is missing "folder". Skipping.`
       );
       return null;
     }
 
     try {
       const frames = await loadFrameSequenceCounted(folder, count);
-      return { kind: "frames", frames, fps, timer: 0, frameIndex: 0 };
+      return { kind: "frames", frames, fps, timer: 0, frameIndex: 0, align: safeAlign };
     } catch (e) {
       warnOnce(
         `${levelId}:${layerName}:loadFail`,
-        `[${levelId}] Failed to load ${layerName} frames. Skipping layer. (${e.message})`
+        `[${levelId}] Failed to load ${layerName} frames. Skipping. (${e.message})`
       );
       return null;
     }
@@ -342,7 +328,6 @@ async function loadOptionalLayer(levelId, layerSpec, layerName) {
   return null;
 }
 
-// ---------- Loaders ----------
 async function loadLevels() {
   const res = await fetch("data/levels.json");
   if (!res.ok) throw new Error(`Failed to fetch data/levels.json (${res.status})`);
@@ -353,19 +338,20 @@ async function loadLevels() {
   }
 
   const loadedLevels = [];
+
   for (const lvl of json.levels) {
     const id = lvl.id || "(missing id)";
     const bgSrc = lvl.background;
 
     if (!bgSrc) {
-      console.warn(`[${id}] Missing required "background" field. Level excluded.`);
+      console.warn(`[${id}] Missing required "background". Level excluded.`);
       continue;
     }
 
     try {
       const bgImg = await loadImage(bgSrc);
 
-      // Optional foreground
+      // TRUE parallax foreground (optional)
       let fgImg = null;
       if (lvl.foreground) {
         try {
@@ -379,44 +365,40 @@ async function loadLevels() {
         }
       }
 
-      // Optional animated layers
-      const l1 = await loadOptionalLayer(lvl.id, lvl.layer1, "layer1");
-      const l2 = await loadOptionalLayer(lvl.id, lvl.layer2, "layer2");
+      const l1 = await loadOptionalLayer(id, lvl.layer1, "layer1");
+      const l2 = await loadOptionalLayer(id, lvl.layer2, "layer2");
 
       loadedLevels.push(lvl);
-      levelAssets.set(lvl.id, { bgImg, fgImg, l1, l2 });
+      levelAssets.set(id, { bgImg, fgImg, l1, l2 });
     } catch (e) {
       console.warn(`[${id}] Background failed to load. Level excluded. (${e.message})`);
     }
   }
 
   if (loadedLevels.length === 0) {
-    throw new Error("No valid levels loaded. Check that each level has a valid background image.");
+    throw new Error("No valid levels loaded. Check backgrounds.");
   }
 
   levelData = loadedLevels;
 
-  const debugIdx = getDebugStartLevelIndex();
-  const startIdx = debugIdx !== null ? debugIdx : randInt(0, levelData.length - 1);
+  const startIdx = randInt(0, levelData.length - 1);
   state.levelIndex = startIdx;
   initCarousel(startIdx);
 }
 
 async function loadSprites() {
-  // AUTO-DETECT: frame_01.png, frame_02.png, ... until missing
   [heroIdleFrames, heroWalkFrames] = await Promise.all([
     loadFrameSequenceAuto(SPRITES.idle.folder, { prefix: "frame_", start: 1, pad: 2 }),
     loadFrameSequenceAuto(SPRITES.walk.folder, { prefix: "frame_", start: 1, pad: 2 }),
   ]);
 
-  // Use first idle frame to set collision/render footprint
   const base = heroIdleFrames[0];
   player.renderW = Math.round(base.width * SPRITE_SCALE);
   player.renderH = Math.round(base.height * SPRITE_SCALE);
   player.x = clamp(player.x, 0, W - player.renderW);
 }
 
-// ---------- Level rendering ----------
+// ---------- Rendering ----------
 function currentLevel() {
   return levelData[state.levelIndex];
 }
@@ -436,13 +418,19 @@ function drawBackground() {
 function drawForeground() {
   const assets = currentLevelAssets();
   if (!assets?.fgImg) return;
+  // ✅ ONLY TRUE parallax layer
   drawZoomPanFollow(assets.fgImg, FG_ZOOM, FG_FOLLOW);
 }
 
-function tickAndDrawOptionalLayer(layerAsset, dt) {
+function drawOptionalLayerAsset(layerAsset, dt) {
   if (!layerAsset) return;
 
-  if (layerAsset.kind === "frames") {
+  // Pick the current frame/image
+  let img = null;
+
+  if (layerAsset.kind === "image") {
+    img = layerAsset.img;
+  } else if (layerAsset.kind === "frames") {
     const frames = layerAsset.frames;
     if (!frames || frames.length === 0) return;
 
@@ -453,21 +441,31 @@ function tickAndDrawOptionalLayer(layerAsset, dt) {
       layerAsset.frameIndex = (layerAsset.frameIndex + 1) % frames.length;
     }
 
-    const img = frames[layerAsset.frameIndex];
-    if (img) ctx.drawImage(img, 0, 0, W, H);
+    img = frames[layerAsset.frameIndex];
+  }
+
+  if (!img) return;
+
+  // Align mode
+  if (layerAsset.align === "bg") {
+    // ✅ Perfect overlap with BG transform
+    drawZoomPanFollow(img, BG_ZOOM, BG_FOLLOW);
+  } else {
+    // Screen-locked
+    ctx.drawImage(img, 0, 0, W, H);
   }
 }
 
 function drawLayer1(dt) {
   const assets = currentLevelAssets();
   if (!assets?.l1) return;
-  tickAndDrawOptionalLayer(assets.l1, dt);
+  drawOptionalLayerAsset(assets.l1, dt);
 }
 
 function drawLayer2(dt) {
   const assets = currentLevelAssets();
   if (!assets?.l2) return;
-  tickAndDrawOptionalLayer(assets.l2, dt);
+  drawOptionalLayerAsset(assets.l2, dt);
 }
 
 // ---------- Player ----------
@@ -512,23 +510,17 @@ function drawPlayer() {
   ctx.restore();
 }
 
-// ---------- Universe switching (edge-based) ----------
+// ---------- Universe switching ----------
 function triggerEdge(edge) {
   if (state.transitioning) return;
-
   state.transitioning = true;
   state.transitionUntil = performance.now() + 60;
   state.lastEdge = edge;
-
   player.visible = false;
 }
 
 function finishTransition() {
-  if (state.lastEdge === "left") {
-    state.levelIndex = carouselMoveLeft();
-  } else {
-    state.levelIndex = carouselMoveRight();
-  }
+  state.levelIndex = state.lastEdge === "left" ? carouselMoveLeft() : carouselMoveRight();
 
   if (state.lastEdge === "left") {
     player.x = W - player.renderW - 2;
@@ -556,7 +548,6 @@ function loop(t) {
     if (input.right) vx += 1;
 
     if (vx !== 0) player.facing = vx > 0 ? 1 : -1;
-
     setAnim(vx === 0 ? "idle" : "walk");
 
     player.x += vx * player.speed * dt;
@@ -584,9 +575,14 @@ function loop(t) {
 
   drawBackground();
   drawLayer1(dt);
+
   drawPlayer();
-  drawForeground();
+
+  // ✅ Layer2 is "in front of hero" but NOT parallax (unless you purposely set it screen/bg)
   drawLayer2(dt);
+
+  // ✅ True parallax foreground stays last
+  drawForeground();
 
   requestAnimationFrame(loop);
 }
