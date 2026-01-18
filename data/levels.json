@@ -1,6 +1,16 @@
 {
   "levels": [
     {
+      "id": "HOME",
+      "name": "Home",
+      "isHome": true,
+      "background": "assets/levels/home/background.png",
+
+      "layer2": { "type": "image", "src": "assets/levels/home/overlay.png", "align": "bg" },
+      "layer3": { "type": "image", "src": "assets/levels/home/title.png",  "align": "screen" },
+      "layer4": { "type": "image", "src": "assets/levels/home/arrows.png", "align": "screen" }
+    },
+    {
       "id": "001",
       "name": "Level 001",
       "background": "assets/levels/001/background.png",

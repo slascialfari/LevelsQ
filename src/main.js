@@ -1,15 +1,19 @@
-// LevelQ Proto — layered levels
+// LevelQ Proto — layered levels + HOME in carousel
 //
 // Draw order (back -> front):
 // 1) Background (REQUIRED)            [zoom+pan follow]
-// 2) Layer 1 (optional)               [can be image or frames; can align to BG]
+// 2) Layer 1 (optional)               [image or frames; align bg/screen]
 // 3) Hero
-// 4) Layer 2 (optional)               [can be image or frames; can align to BG]  <-- in front of hero
-// 5) Foreground (optional; TRUE FG)   [zoom+pan follow; the ONLY parallax layer]
+// 4) Layer 2 (optional)               [overlay; image or frames; align bg/screen]
+// 5) Layer 3 (optional)               [title; image or frames; align bg/screen]
+// 6) Layer 4 (optional)               [arrows; image or frames; align bg/screen]
+// 7) Foreground (optional; TRUE FG)   [zoom+pan follow; ONLY parallax layer]
 //
-// Key idea:
-// - If a layer must overlap the background perfectly -> set align:"bg" in levels.json
-// - If you want "true parallax close to viewer" -> use `foreground`
+// HOME behavior:
+// - Level with `isHome:true` starts first
+// - HOME is INCLUDED in carousel/loop
+// - Until all non-home levels have been used, moving into new territory appends/prepends unused non-home levels
+// - After all non-home levels are used, carousel loops across ALL items (including HOME)
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -35,7 +39,6 @@ const WALK_BOB_PX = 0; // 0 disables
 // -------------------------------------------
 
 // -------- PAN-FOLLOW (non-tiling, no seams) --------
-// Zoom > 1 creates "extra image" to pan inside without revealing edges.
 const BG_ZOOM = 1.05;
 const FG_ZOOM = 1.02;
 
@@ -51,7 +54,7 @@ let levelData = [];
 let heroIdleFrames = [];
 let heroWalkFrames = [];
 
-// levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null }
+// levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null, l3|null, l4|null }
 const levelAssets = new Map();
 
 const state = {
@@ -60,8 +63,12 @@ const state = {
   transitionUntil: 0,
   lastEdge: null,
 
+  // Carousel stores LEVEL INDICES (not ids)
   carousel: [],
   carouselPos: 0,
+
+  // Home index in levelData (or -1)
+  homeIndex: -1,
 };
 
 const player = {
@@ -104,36 +111,68 @@ function warnOnce(key, msg) {
   console.warn(msg);
 }
 
-// ---------- Carousel ----------
-function initCarousel(startLevelIndex) {
-  state.carousel = [startLevelIndex];
-  state.carouselPos = 0;
+function isHomeIndex(i) {
+  return state.homeIndex !== -1 && i === state.homeIndex;
 }
 
-function pickUnusedLevelIndex() {
+// ---------- Carousel helpers ----------
+function nonHomeIndices() {
+  const out = [];
+  for (let i = 0; i < levelData.length; i++) {
+    if (!isHomeIndex(i)) out.push(i);
+  }
+  return out;
+}
+
+function usedNonHomeCount() {
+  return state.carousel.filter((i) => !isHomeIndex(i)).length;
+}
+
+function pickUnusedNonHomeLevelIndex() {
   const used = new Set(state.carousel);
-  const unused = [];
-  for (let i = 0; i < levelData.length; i++) if (!used.has(i)) unused.push(i);
-  if (unused.length === 0) return state.carousel[state.carouselPos] ?? 0;
-  return unused[randInt(0, unused.length - 1)];
+  const pool = nonHomeIndices().filter((i) => !used.has(i));
+  if (pool.length === 0) {
+    // fallback (shouldn't happen if called correctly)
+    const nonHome = nonHomeIndices();
+    return nonHome[0] ?? 0;
+  }
+  return pool[randInt(0, pool.length - 1)];
+}
+
+function initCarouselWithHomeOrFallback() {
+  if (state.homeIndex !== -1) {
+    state.carousel = [state.homeIndex];
+    state.carouselPos = 0;
+    state.levelIndex = state.homeIndex;
+    return;
+  }
+
+  const startIdx = randInt(0, levelData.length - 1);
+  state.carousel = [startIdx];
+  state.carouselPos = 0;
+  state.levelIndex = startIdx;
 }
 
 function carouselMoveRight() {
   if (levelData.length <= 1) return state.levelIndex;
 
-  const allUsed = state.carousel.length >= levelData.length;
+  const nonHome = nonHomeIndices();
+  const allUsed = usedNonHomeCount() >= nonHome.length;
 
   if (allUsed) {
     state.carouselPos = (state.carouselPos + 1) % state.carousel.length;
     return state.carousel[state.carouselPos];
   }
 
+  // Not all used yet:
+  // If we already have a next element in history, use it.
   if (state.carouselPos < state.carousel.length - 1) {
     state.carouselPos += 1;
     return state.carousel[state.carouselPos];
   }
 
-  const nextIdx = pickUnusedLevelIndex();
+  // We are at the end: append a new unused non-home
+  const nextIdx = pickUnusedNonHomeLevelIndex();
   state.carousel.push(nextIdx);
   state.carouselPos = state.carousel.length - 1;
   return nextIdx;
@@ -142,7 +181,8 @@ function carouselMoveRight() {
 function carouselMoveLeft() {
   if (levelData.length <= 1) return state.levelIndex;
 
-  const allUsed = state.carousel.length >= levelData.length;
+  const nonHome = nonHomeIndices();
+  const allUsed = usedNonHomeCount() >= nonHome.length;
 
   if (allUsed) {
     state.carouselPos =
@@ -150,12 +190,15 @@ function carouselMoveLeft() {
     return state.carousel[state.carouselPos];
   }
 
+  // Not all used yet:
+  // If we can go back within history, do it
   if (state.carouselPos > 0) {
     state.carouselPos -= 1;
     return state.carousel[state.carouselPos];
   }
 
-  const prevIdx = pickUnusedLevelIndex();
+  // At the beginning: prepend a new unused non-home
+  const prevIdx = pickUnusedNonHomeLevelIndex();
   state.carousel.unshift(prevIdx);
   state.carouselPos = 0;
   return prevIdx;
@@ -175,7 +218,7 @@ function getHeroNormalizedX() {
   return t * 2 - 1;
 }
 
-// Zoom+pan draw (used for BG + TRUE foreground + optionally aligned layers)
+// Zoom+pan draw (used for BG + TRUE foreground + bg-aligned layers)
 function drawZoomPanFollow(img, zoom, followStrength) {
   if (!img) return;
 
@@ -209,7 +252,10 @@ function loadImage(src) {
 }
 
 // Auto-detect hero frames: folder/frame_01.png, frame_02.png, ... until missing
-async function loadFrameSequenceAuto(folder, { prefix = "frame_", start = 1, pad = 2 } = {}) {
+async function loadFrameSequenceAuto(
+  folder,
+  { prefix = "frame_", start = 1, pad = 2 } = {}
+) {
   const frames = [];
   let i = start;
 
@@ -269,7 +315,7 @@ async function loadOptionalLayer(levelId, layerSpec, layerName) {
   if (!layerSpec) return null;
 
   const type = String(layerSpec.type || "frames").toLowerCase();
-  const align = String(layerSpec.align || "screen").toLowerCase(); // default "screen"
+  const align = String(layerSpec.align || "screen").toLowerCase();
   const safeAlign = align === "bg" ? "bg" : "screen";
 
   if (type === "image") {
@@ -367,9 +413,11 @@ async function loadLevels() {
 
       const l1 = await loadOptionalLayer(id, lvl.layer1, "layer1");
       const l2 = await loadOptionalLayer(id, lvl.layer2, "layer2");
+      const l3 = await loadOptionalLayer(id, lvl.layer3, "layer3");
+      const l4 = await loadOptionalLayer(id, lvl.layer4, "layer4");
 
       loadedLevels.push(lvl);
-      levelAssets.set(id, { bgImg, fgImg, l1, l2 });
+      levelAssets.set(id, { bgImg, fgImg, l1, l2, l3, l4 });
     } catch (e) {
       console.warn(`[${id}] Background failed to load. Level excluded. (${e.message})`);
     }
@@ -381,9 +429,11 @@ async function loadLevels() {
 
   levelData = loadedLevels;
 
-  const startIdx = randInt(0, levelData.length - 1);
-  state.levelIndex = startIdx;
-  initCarousel(startIdx);
+  // Detect HOME
+  state.homeIndex = levelData.findIndex((l) => l && l.isHome === true);
+
+  // Start with HOME in carousel if present
+  initCarouselWithHomeOrFallback();
 }
 
 async function loadSprites() {
@@ -418,14 +468,12 @@ function drawBackground() {
 function drawForeground() {
   const assets = currentLevelAssets();
   if (!assets?.fgImg) return;
-  // ✅ ONLY TRUE parallax layer
   drawZoomPanFollow(assets.fgImg, FG_ZOOM, FG_FOLLOW);
 }
 
 function drawOptionalLayerAsset(layerAsset, dt) {
   if (!layerAsset) return;
 
-  // Pick the current frame/image
   let img = null;
 
   if (layerAsset.kind === "image") {
@@ -446,27 +494,25 @@ function drawOptionalLayerAsset(layerAsset, dt) {
 
   if (!img) return;
 
-  // Align mode
   if (layerAsset.align === "bg") {
-    // ✅ Perfect overlap with BG transform
     drawZoomPanFollow(img, BG_ZOOM, BG_FOLLOW);
   } else {
-    // Screen-locked
     ctx.drawImage(img, 0, 0, W, H);
   }
 }
 
-function drawLayer1(dt) {
+function drawLayerN(key, dt) {
   const assets = currentLevelAssets();
-  if (!assets?.l1) return;
-  drawOptionalLayerAsset(assets.l1, dt);
+  if (!assets) return;
+  const layerAsset = assets[key];
+  if (!layerAsset) return;
+  drawOptionalLayerAsset(layerAsset, dt);
 }
 
-function drawLayer2(dt) {
-  const assets = currentLevelAssets();
-  if (!assets?.l2) return;
-  drawOptionalLayerAsset(assets.l2, dt);
-}
+function drawLayer1(dt) { drawLayerN("l1", dt); }
+function drawLayer2(dt) { drawLayerN("l2", dt); }
+function drawLayer3(dt) { drawLayerN("l3", dt); }
+function drawLayer4(dt) { drawLayerN("l4", dt); }
 
 // ---------- Player ----------
 function currentFrames() {
@@ -578,10 +624,12 @@ function loop(t) {
 
   drawPlayer();
 
-  // ✅ Layer2 is "in front of hero" but NOT parallax (unless you purposely set it screen/bg)
+  // In front of hero
   drawLayer2(dt);
+  drawLayer3(dt);
+  drawLayer4(dt);
 
-  // ✅ True parallax foreground stays last
+  // True parallax FG last
   drawForeground();
 
   requestAnimationFrame(loop);
