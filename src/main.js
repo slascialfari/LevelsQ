@@ -1,19 +1,13 @@
-// LevelQ Proto — layered levels + HOME in carousel
+// LevelQ Proto — layered levels + HOME in carousel + HOME intro state machine
 //
 // Draw order (back -> front):
-// 1) Background (REQUIRED)            [zoom+pan follow]
-// 2) Layer 1 (optional)               [image or frames; align bg/screen]
-// 3) Hero
-// 4) Layer 2 (optional)               [overlay; image or frames; align bg/screen]
-// 5) Layer 3 (optional)               [title; image or frames; align bg/screen]
-// 6) Layer 4 (optional)               [arrows; image or frames; align bg/screen]
+// 1) Background (REQUIRED)            [1:1, no zoom/pan]
+// 2) Layer 1 (optional)               [image or frames; 1:1]
+// 3) Hero (normal gameplay only)
+// 4) Layer 2 (optional)
+// 5) Layer 3 (optional)
+// 6) Layer 4 (optional)
 // 7) Foreground (optional; TRUE FG)   [zoom+pan follow; ONLY parallax layer]
-//
-// HOME behavior:
-// - Level with `isHome:true` starts first
-// - HOME is INCLUDED in carousel/loop
-// - Until all non-home levels have been used, moving into new territory appends/prepends unused non-home levels
-// - After all non-home levels are used, carousel loops across ALL items (including HOME)
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -25,26 +19,25 @@ const H = canvas.height;
 const FLOOR_Y = 600;
 
 // =========================
-// SPRITES
+// SPRITES (normal gameplay hero)
 // =========================
 const SPRITES = {
-  idle: { folder: "assets/sprites/hero_idle", fps: 6 },
-  walk: { folder: "assets/sprites/hero_walk", fps: 12 },
+  idle: { folder: "assets/sprites/hero_idle", count: 27, fps: 6 },
+  walk: { folder: "assets/sprites/hero_walk", count: 8, fps: 12 },
 };
 
 // -------- TWEAKABLE VISUAL CONSTANTS --------
 const SPRITE_SCALE = 0.34;
 const FEET_FUDGE_PX = 0;
 const WALK_BOB_PX = 0; // 0 disables
+
+// 🔧 HOME HERO DROP OFFSET (THIS IS WHAT YOU TWEAK)
+const HOME_DROP_OFFSET_X = 40; // px → + right, - left
 // -------------------------------------------
 
-// -------- PAN-FOLLOW (non-tiling, no seams) --------
-const BG_ZOOM = 1.05;
+// -------- FOREGROUND PARALLAX ONLY --------
 const FG_ZOOM = 1.02;
-
-const BG_FOLLOW = 0.025;
 const FG_FOLLOW = 0.55;
-
 const MAX_PAN_PX = 55;
 // -------------------------------------------
 
@@ -69,6 +62,9 @@ const state = {
 
   // Home index in levelData (or -1)
   homeIndex: -1,
+
+  // Gameplay enabled only after HOME handoff
+  gameplayEnabled: false,
 };
 
 const player = {
@@ -83,16 +79,32 @@ const player = {
   renderH: 56,
 };
 
-const input = { left: false, right: false };
+const input = {
+  left: false,
+  right: false,
+  enter: false,
+  enterPressedThisFrame: false,
+  arrowPressedThisFrame: false,
+};
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") input.left = true;
   if (e.key === "ArrowRight") input.right = true;
+
+  if (e.key === "Enter") {
+    if (!input.enter) input.enterPressedThisFrame = true;
+    input.enter = true;
+  }
+
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    input.arrowPressedThisFrame = true;
+  }
 });
 
 window.addEventListener("keyup", (e) => {
   if (e.key === "ArrowLeft") input.left = false;
   if (e.key === "ArrowRight") input.right = false;
+  if (e.key === "Enter") input.enter = false;
 });
 
 // ---------- Helpers ----------
@@ -132,7 +144,6 @@ function pickUnusedNonHomeLevelIndex() {
   const used = new Set(state.carousel);
   const pool = nonHomeIndices().filter((i) => !used.has(i));
   if (pool.length === 0) {
-    // fallback (shouldn't happen if called correctly)
     const nonHome = nonHomeIndices();
     return nonHome[0] ?? 0;
   }
@@ -164,14 +175,11 @@ function carouselMoveRight() {
     return state.carousel[state.carouselPos];
   }
 
-  // Not all used yet:
-  // If we already have a next element in history, use it.
   if (state.carouselPos < state.carousel.length - 1) {
     state.carouselPos += 1;
     return state.carousel[state.carouselPos];
   }
 
-  // We are at the end: append a new unused non-home
   const nextIdx = pickUnusedNonHomeLevelIndex();
   state.carousel.push(nextIdx);
   state.carouselPos = state.carousel.length - 1;
@@ -190,14 +198,11 @@ function carouselMoveLeft() {
     return state.carousel[state.carouselPos];
   }
 
-  // Not all used yet:
-  // If we can go back within history, do it
   if (state.carouselPos > 0) {
     state.carouselPos -= 1;
     return state.carousel[state.carouselPos];
   }
 
-  // At the beginning: prepend a new unused non-home
   const prevIdx = pickUnusedNonHomeLevelIndex();
   state.carousel.unshift(prevIdx);
   state.carouselPos = 0;
@@ -211,14 +216,12 @@ function setAnim(next) {
   player.frameTimer = 0;
 }
 
-// Returns hero position normalized to [-1, +1]
 function getHeroNormalizedX() {
   const range = Math.max(1, W - player.renderW);
   const t = clamp(player.x / range, 0, 1);
   return t * 2 - 1;
 }
 
-// Zoom+pan draw (used for BG + TRUE foreground + bg-aligned layers)
 function drawZoomPanFollow(img, zoom, followStrength) {
   if (!img) return;
 
@@ -251,36 +254,6 @@ function loadImage(src) {
   });
 }
 
-// Auto-detect hero frames: folder/frame_01.png, frame_02.png, ... until missing
-async function loadFrameSequenceAuto(
-  folder,
-  { prefix = "frame_", start = 1, pad = 2 } = {}
-) {
-  const frames = [];
-  let i = start;
-
-  while (true) {
-    const n = String(i).padStart(pad, "0");
-    const src = `${folder}/${prefix}${n}.png`;
-    try {
-      const img = await loadImage(src);
-      frames.push(img);
-      i++;
-    } catch {
-      break;
-    }
-  }
-
-  if (frames.length === 0) {
-    throw new Error(
-      `No frames found in "${folder}". Expected files like ${folder}/${prefix}${String(start).padStart(pad, "0")}.png`
-    );
-  }
-
-  return frames;
-}
-
-// Count-based loader for level frame layers
 function loadFrameSequenceCounted(folder, count) {
   const frames = [];
   const promises = [];
@@ -306,10 +279,6 @@ function loadFrameSequenceCounted(folder, count) {
  * Optional layer spec supports:
  * - { type:"frames", folder:"...", count: N, fps: 12, align:"bg"|"screen" }
  * - { type:"image",  src:"...", align:"bg"|"screen" }
- *
- * align:
- * - "bg"     => draw with same zoom+pan as background (perfect overlap)
- * - "screen" => draw raw at (0,0,W,H)
  */
 async function loadOptionalLayer(levelId, layerSpec, layerName) {
   if (!layerSpec) return null;
@@ -397,7 +366,6 @@ async function loadLevels() {
     try {
       const bgImg = await loadImage(bgSrc);
 
-      // TRUE parallax foreground (optional)
       let fgImg = null;
       if (lvl.foreground) {
         try {
@@ -429,17 +397,14 @@ async function loadLevels() {
 
   levelData = loadedLevels;
 
-  // Detect HOME
   state.homeIndex = levelData.findIndex((l) => l && l.isHome === true);
-
-  // Start with HOME in carousel if present
   initCarouselWithHomeOrFallback();
 }
 
 async function loadSprites() {
   [heroIdleFrames, heroWalkFrames] = await Promise.all([
-    loadFrameSequenceAuto(SPRITES.idle.folder, { prefix: "frame_", start: 1, pad: 2 }),
-    loadFrameSequenceAuto(SPRITES.walk.folder, { prefix: "frame_", start: 1, pad: 2 }),
+    loadFrameSequenceCounted(SPRITES.idle.folder, SPRITES.idle.count),
+    loadFrameSequenceCounted(SPRITES.walk.folder, SPRITES.walk.count),
   ]);
 
   const base = heroIdleFrames[0];
@@ -448,7 +413,7 @@ async function loadSprites() {
   player.x = clamp(player.x, 0, W - player.renderW);
 }
 
-// ---------- Rendering ----------
+// ---------- Rendering helpers ----------
 function currentLevel() {
   return levelData[state.levelIndex];
 }
@@ -462,7 +427,7 @@ function currentLevelAssets() {
 function drawBackground() {
   const assets = currentLevelAssets();
   if (!assets?.bgImg) return;
-  drawZoomPanFollow(assets.bgImg, BG_ZOOM, BG_FOLLOW);
+  ctx.drawImage(assets.bgImg, 0, 0, W, H);
 }
 
 function drawForeground() {
@@ -484,6 +449,7 @@ function drawOptionalLayerAsset(layerAsset, dt) {
 
     layerAsset.timer += dt;
     const spf = 1 / Math.max(1, layerAsset.fps || DEFAULT_LAYER_FPS);
+
     while (layerAsset.timer >= spf) {
       layerAsset.timer -= spf;
       layerAsset.frameIndex = (layerAsset.frameIndex + 1) % frames.length;
@@ -493,12 +459,7 @@ function drawOptionalLayerAsset(layerAsset, dt) {
   }
 
   if (!img) return;
-
-  if (layerAsset.align === "bg") {
-    drawZoomPanFollow(img, BG_ZOOM, BG_FOLLOW);
-  } else {
-    ctx.drawImage(img, 0, 0, W, H);
-  }
+  ctx.drawImage(img, 0, 0, W, H);
 }
 
 function drawLayerN(key, dt) {
@@ -559,6 +520,8 @@ function drawPlayer() {
 // ---------- Universe switching ----------
 function triggerEdge(edge) {
   if (state.transitioning) return;
+  if (!state.gameplayEnabled) return;
+
   state.transitioning = true;
   state.transitionUntil = performance.now() + 60;
   state.lastEdge = edge;
@@ -581,6 +544,232 @@ function finishTransition() {
   state.transitioning = false;
 }
 
+// =========================
+// HOME INTRO STATE MACHINE
+// =========================
+const HOME = {
+  active: false,
+  phase: 0,
+  phaseTimer: 0,
+
+  preStart: null,
+  start1: null,
+  start2: null,
+  idle: null,
+  underlayImg: null,
+
+  promptEnter: "Press Enter",
+  promptArrows: "Use ← →",
+  pauseMs: 1000,
+};
+
+function isHomeLevel() {
+  return isHomeIndex(state.levelIndex);
+}
+
+function framePlayerUpdate(seq, dt) {
+  if (!seq || !seq.frames?.length) return;
+
+  seq.timer += dt;
+  const spf = 1 / Math.max(1, seq.fps || 12);
+
+  while (seq.timer >= spf) {
+    seq.timer -= spf;
+    const next = seq.idx + 1;
+    if (next >= seq.frames.length) {
+      seq.idx = seq.loop ? 0 : seq.frames.length - 1;
+      seq.done = !seq.loop;
+    } else {
+      seq.idx = next;
+    }
+  }
+}
+
+function drawFrameSeq(seq) {
+  if (!seq || !seq.frames?.length) return;
+  const img = seq.frames[seq.idx] || null;
+  if (!img) return;
+  ctx.drawImage(img, 0, 0, W, H);
+}
+
+function drawHomeUnderlayIfAny() {
+  if (!HOME.underlayImg) return;
+  ctx.drawImage(HOME.underlayImg, 0, 0, W, H);
+}
+
+function drawHomePrompts() {
+  ctx.save();
+  ctx.font = "18px ui-sans-serif, system-ui";
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.textAlign = "center";
+
+  if (HOME.phase === 0) {
+    ctx.fillText(HOME.promptEnter, W / 2, 640);
+  } else if (HOME.phase >= 4) {
+    ctx.fillText(HOME.promptArrows, W / 2, 640);
+  }
+
+  ctx.restore();
+}
+
+async function loadHomeIntroAssetsIfNeeded() {
+  const lvl = currentLevel();
+  const spec = lvl?.homeIntro;
+  if (!spec) return;
+
+  if (HOME.preStart && HOME.start1 && HOME.start2 && HOME.idle) return;
+
+  HOME.promptEnter = spec.promptEnter || HOME.promptEnter;
+  HOME.promptArrows = spec.promptArrows || HOME.promptArrows;
+  HOME.pauseMs = Number(spec.pauseMs ?? HOME.pauseMs);
+
+  const mkSeq = async (s) => {
+    if (!s?.folder || !s?.count) return null;
+    const frames = await loadFrameSequenceCounted(s.folder, Number(s.count));
+    return {
+      frames,
+      fps: Number(s.fps || 12),
+      loop: Boolean(s.loop),
+      timer: 0,
+      idx: 0,
+      done: false,
+    };
+  };
+
+  HOME.preStart = await mkSeq(spec.preStart);
+  HOME.start1 = await mkSeq(spec.start1);
+  HOME.start2 = await mkSeq(spec.start2);
+  HOME.idle = await mkSeq(spec.idle);
+
+  if (spec.start1?.underlay) {
+    HOME.underlayImg = await loadImage(spec.start1.underlay);
+  }
+}
+
+function enterHomeIntroMode() {
+  HOME.active = true;
+  HOME.phase = 0;
+  HOME.phaseTimer = 0;
+
+  state.gameplayEnabled = false;
+  player.visible = false;
+
+  for (const seq of [HOME.preStart, HOME.start1, HOME.start2, HOME.idle]) {
+    if (!seq) continue;
+    seq.timer = 0;
+    seq.idx = 0;
+    seq.done = false;
+  }
+}
+
+function handoffHomeToGameplay() {
+  // 🔧 Drop slightly right/left using HOME_DROP_OFFSET_X
+  player.x = Math.floor(W / 2 - player.renderW / 2) + HOME_DROP_OFFSET_X;
+  player.x = clamp(player.x, 0, W - player.renderW);
+
+  if (input.left) player.facing = -1;
+  if (input.right) player.facing = 1;
+
+  state.gameplayEnabled = true;
+  player.visible = true;
+
+  const vx = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+  setAnim(vx === 0 ? "idle" : "walk");
+
+  HOME.active = false;
+}
+
+function updateAndDrawHome(dt) {
+  if (!HOME.active) return;
+
+  const drawTopUI = () => {
+    drawLayer3(dt);      // title.png
+    drawHomePrompts();   // optional text
+  };
+
+  // Phase 0: preStart BEHIND background
+  if (HOME.phase === 0) {
+    framePlayerUpdate(HOME.preStart, dt);
+    drawFrameSeq(HOME.preStart); // behind
+    drawBackground();            // on top
+    drawTopUI();
+
+    if (input.enterPressedThisFrame) {
+      HOME.phase = 1;
+      HOME.start1.timer = 0;
+      HOME.start1.idx = 0;
+      HOME.start1.done = false;
+    }
+    return;
+  }
+
+  // Phase 1: start1 BEHIND background
+  if (HOME.phase === 1) {
+    framePlayerUpdate(HOME.start1, dt);
+    drawFrameSeq(HOME.start1); // behind
+    drawBackground();          // on top
+    drawTopUI();
+
+    if (HOME.start1?.done) {
+      HOME.phase = 2;
+      HOME.phaseTimer = 0;
+    }
+    return;
+  }
+
+  // Phase 2: underlay BEHIND background (pause)
+  if (HOME.phase === 2) {
+    drawHomeUnderlayIfAny(); // behind
+    drawBackground();        // on top
+    drawTopUI();
+
+    HOME.phaseTimer += dt * 1000;
+    if (HOME.phaseTimer >= HOME.pauseMs) {
+      HOME.phase = 3;
+      HOME.start2.timer = 0;
+      HOME.start2.idx = 0;
+      HOME.start2.done = false;
+    }
+    return;
+  }
+
+  // Phase 3: start2 IN FRONT; underlay ALWAYS behind background
+  if (HOME.phase === 3) {
+    drawHomeUnderlayIfAny(); // behind
+    drawBackground();        // on top
+
+    framePlayerUpdate(HOME.start2, dt);
+    drawFrameSeq(HOME.start2); // front
+    drawTopUI();
+
+    if (HOME.start2?.done) {
+      HOME.phase = 4;
+      HOME.idle.timer = 0;
+      HOME.idle.idx = 0;
+      HOME.idle.done = false;
+    }
+    return;
+  }
+
+  // Phase 4: immediately move to waiting state 5 (idle loop)
+  if (HOME.phase === 4) HOME.phase = 5;
+
+  // Phase 5: idle IN FRONT; underlay ALWAYS behind background
+  if (HOME.phase === 5) {
+    drawHomeUnderlayIfAny(); // behind
+    drawBackground();        // on top
+
+    framePlayerUpdate(HOME.idle, dt);
+    drawFrameSeq(HOME.idle); // front
+    drawTopUI();
+
+    if (input.arrowPressedThisFrame) {
+      handoffHomeToGameplay();
+    }
+    return;
+  }
+}
+
 // ---------- Loop ----------
 let lastT = performance.now();
 
@@ -588,6 +777,53 @@ function loop(t) {
   const dt = Math.min(0.033, (t - lastT) / 1000);
   lastT = t;
 
+  ctx.clearRect(0, 0, W, H);
+
+  // HOME intro pipeline
+  if (isHomeLevel() && !state.gameplayEnabled) {
+    if (!HOME.preStart || !HOME.start1 || !HOME.start2 || !HOME.idle) {
+      drawBackground();
+      drawLayer3(dt);
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.font = "18px ui-sans-serif, system-ui";
+      ctx.fillText("Loading...", 20, 30);
+      ctx.restore();
+
+      if (!HOME._loading) {
+        HOME._loading = true;
+        loadHomeIntroAssetsIfNeeded()
+          .then(() => {
+            HOME._loading = false;
+            enterHomeIntroMode();
+          })
+          .catch((e) => {
+            HOME._loading = false;
+            console.error(e);
+          });
+      }
+
+      // consume one-frame flags (AFTER processing this frame)
+      input.enterPressedThisFrame = false;
+      input.arrowPressedThisFrame = false;
+
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    if (!HOME.active) enterHomeIntroMode();
+    updateAndDrawHome(dt);
+
+    // consume one-frame flags (AFTER processing this frame)
+    input.enterPressedThisFrame = false;
+    input.arrowPressedThisFrame = false;
+
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // ============ Normal gameplay ============
   if (!state.transitioning) {
     let vx = 0;
     if (input.left) vx -= 1;
@@ -617,20 +853,27 @@ function loop(t) {
     finishTransition();
   }
 
-  ctx.clearRect(0, 0, W, H);
-
-  drawBackground();
-  drawLayer1(dt);
+  // Draw normal level
+  // HOME underlay (layer1) must ALWAYS be behind background
+  if (isHomeLevel()) {
+    drawLayer1(dt);   // underlay first
+    drawBackground(); // then background on top
+  } else {
+    drawBackground();
+    drawLayer1(dt);
+  }
 
   drawPlayer();
 
-  // In front of hero
   drawLayer2(dt);
   drawLayer3(dt);
   drawLayer4(dt);
 
-  // True parallax FG last
   drawForeground();
+
+  // consume one-frame flags (AFTER processing this frame)
+  input.enterPressedThisFrame = false;
+  input.arrowPressedThisFrame = false;
 
   requestAnimationFrame(loop);
 }
