@@ -41,6 +41,328 @@ const MAX_PAN_PX = 55;
 
 const DEFAULT_LAYER_FPS = 12;
 
+// =========================
+// RADIO
+// =========================
+const RADIO = {
+  stations: [],
+  index: 0,
+
+  audio: null,
+
+  // best-effort preload trackers
+  preloads: [],
+
+  // UI
+  widgetEl: null,
+  nameEl: null,
+  statusEl: null,
+
+  loaded: false,
+  visible: false,
+
+  // playback state
+  warmStarted: false,   // stream started muted after user gesture
+  liveEnabled: false,   // we unmuted/faded in
+  switching: false,
+  lastSwitchAt: 0,
+
+  // widget placement
+  _placedOnce: false,
+
+  async loadStations() {
+    try {
+      const res = await fetch("data/radio.json", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to fetch data/radio.json (${res.status})`);
+      const json = await res.json();
+
+      const list = Array.isArray(json?.stations) ? json.stations : [];
+      this.stations = list
+        .map((s) => ({
+          name: String(s?.name || "").trim(),
+          url: String(s?.url || "").trim(),
+        }))
+        .filter((s) => s.name && s.url);
+
+      this.widgetEl = document.getElementById("radioWidget");
+      this.nameEl = document.getElementById("radioStationName");
+      this.statusEl = document.getElementById("radioStatus");
+
+      // main audio element
+      this.audio = new Audio();
+      this.audio.preload = "none";
+      this.audio.crossOrigin = "anonymous";
+      this.audio.volume = 0;
+
+      this.audio.addEventListener("playing", () => {
+        this.setStatus(this.liveEnabled ? "Playing" : "Prebuffering…");
+      });
+      this.audio.addEventListener("waiting", () => {
+        this.setStatus(this.liveEnabled ? "Buffering…" : "Prebuffering…");
+      });
+      this.audio.addEventListener("stalled", () => {
+        this.setStatus("Stalled…");
+      });
+      this.audio.addEventListener("error", () => {
+        this.setStatus("Error… trying next");
+        this.tryNextStation(+1, { forcePlay: this.warmStarted || this.liveEnabled });
+      });
+
+      // best-effort preloads
+      this.preloads = this.stations.map((st) => {
+        const a = new Audio();
+        a.preload = "auto";
+        a.crossOrigin = "anonymous";
+        a.src = st.url;
+        try { a.load(); } catch (_) {}
+        return { audio: a, ready: false, url: st.url };
+      });
+      this.preloads.forEach((p) => {
+        p.audio.addEventListener("canplay", () => { p.ready = true; });
+      });
+
+      this.loaded = true;
+      this.updateUI();
+      this.setStatus("Ready");
+    } catch (e) {
+      console.warn("[RADIO] Failed to load stations:", e);
+      this.loaded = false;
+    }
+  },
+
+  // Place widget OUTSIDE the canvas, aligned with canvas top-right corner,
+  // but offset to the RIGHT so it does not overlap the canvas.
+  placeWidget() {
+  if (!this.loaded || !this.widgetEl) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const gap = 12;
+
+  // Measure widget (needs to be display:block at least once to measure properly)
+  const prevDisplay = this.widgetEl.style.display;
+  if (!this.visible) this.widgetEl.style.display = "block";
+  const wRect = this.widgetEl.getBoundingClientRect();
+  if (!this.visible) this.widgetEl.style.display = prevDisplay || "none";
+
+  // TARGET: above the canvas, right-aligned to canvas
+  let left = rect.right - wRect.width - gap;
+  let top = rect.top - wRect.height - gap;
+
+  const ww = window.innerWidth;
+  const wh = window.innerHeight;
+
+  // Clamp horizontally inside viewport
+  left = Math.max(8, Math.min(left, ww - wRect.width - 8));
+
+  // If there is not enough space ABOVE the canvas, fallback to the RIGHT side (like before)
+  if (top < 8) {
+    top = rect.top + gap;         // align with top of canvas
+    left = rect.right + gap;      // place to the right outside canvas
+
+    // If no room on the right, place to the left outside canvas
+    if (left + wRect.width > ww - 8) {
+      left = rect.left - gap - wRect.width;
+    }
+
+    // Final clamp
+    left = Math.max(8, Math.min(left, ww - wRect.width - 8));
+    top = Math.max(8, Math.min(top, wh - wRect.height - 8));
+  }
+
+  // Normal clamp vertically (for the "above" placement)
+  top = Math.max(8, Math.min(top, wh - wRect.height - 8));
+
+  this.widgetEl.style.left = `${Math.round(left)}px`;
+  this.widgetEl.style.top = `${Math.round(top)}px`;
+  this._placedOnce = true;
+}
+,
+
+  ensureVisible() {
+    if (!this.loaded || !this.widgetEl) return;
+    if (!this.visible) {
+      this.visible = true;
+      this.widgetEl.style.display = "block";
+    }
+    // Place now (and keep updating on resize/scroll)
+    this.placeWidget();
+  },
+
+  setStatus(text) {
+    if (!this.loaded || !this.statusEl) return;
+    this.statusEl.textContent = text;
+  },
+
+  updateUI() {
+    if (!this.loaded || !this.nameEl) return;
+    if (!this.stations.length) {
+      this.nameEl.textContent = "No stations";
+      return;
+    }
+    const s = this.stations[this.index];
+    this.nameEl.textContent = s?.name || "—";
+  },
+
+  // Start stream early (muted) right after FIRST Enter press (user gesture).
+  async warmUpFromGesture() {
+    if (!this.loaded || !this.audio || !this.stations.length) return;
+    if (this.warmStarted) return;
+
+    // pick first “ready-looking” preload if any, else first in order
+    const firstReadyIndex = this.preloads.findIndex((p) => p.ready);
+    if (firstReadyIndex >= 0) this.index = firstReadyIndex;
+
+    this.updateUI();
+    this.setStatus("Prebuffering…");
+
+    try {
+      this.audio.pause();
+      this.audio.src = this.stations[this.index].url;
+      try { this.audio.load(); } catch (_) {}
+
+      // start muted (volume 0) so it can buffer/play in background
+      this.audio.muted = true;
+      this.audio.volume = 0;
+
+      await this.audio.play(); // should succeed because it's called on Enter gesture
+      this.warmStarted = true;
+      this.setStatus("Prebuffering…");
+    } catch (e) {
+      const msg = String(e?.name || e?.message || e);
+      if (msg.includes("NotAllowedError")) {
+        // In case Enter gesture wasn't considered (rare), we'll still try later
+        this.setStatus("Warmup blocked");
+      } else {
+        this.setStatus("Warmup failed…");
+        // try next quickly
+        await this.tryNextStation(+1, { forcePlay: true });
+      }
+    }
+  },
+
+  // When you reach HOME idle (state 4), show widget and fade audio in.
+  async goLive() {
+    if (!this.loaded || !this.audio || !this.stations.length) return;
+
+    this.ensureVisible();
+
+    // If warmup never started, try starting now (may still work since Enter was used earlier)
+    if (!this.warmStarted) {
+      await this.warmUpFromGesture();
+    }
+
+    // If audio still isn't actually playing, force a play attempt
+    if (this.audio.paused) {
+      this.setStatus("Starting…");
+      try {
+        this.audio.muted = true;
+        this.audio.volume = 0;
+        await this.audio.play();
+        this.warmStarted = true;
+      } catch (e) {
+        this.setStatus("Autoplay blocked (press Q/W)");
+        return;
+      }
+    }
+
+    // Fade in
+    this.liveEnabled = true;
+    this.audio.muted = false;
+    this.setStatus("Playing");
+
+    const target = 1.0;
+    const step = 0.06;     // per tick
+    const intervalMs = 60; // fade speed
+
+    // start from current volume
+    if (this.audio.volume < 0.01) this.audio.volume = 0;
+
+    const fade = setInterval(() => {
+      if (!this.audio) return clearInterval(fade);
+      const v = this.audio.volume;
+      if (v >= target - 0.02) {
+        this.audio.volume = target;
+        clearInterval(fade);
+      } else {
+        this.audio.volume = Math.min(target, v + step);
+      }
+    }, intervalMs);
+  },
+
+  async playIndexWithFastFail(i) {
+    if (!this.loaded || !this.audio || !this.stations.length) return;
+
+    this.index = ((i % this.stations.length) + this.stations.length) % this.stations.length;
+    const station = this.stations[this.index];
+    this.updateUI();
+
+    try {
+      this.audio.pause();
+      this.audio.src = station.url;
+      try { this.audio.load(); } catch (_) {}
+
+      // keep current mute/volume policy (warm or live)
+      const playPromise = this.audio.play();
+
+      const fastFailMs = 1800;
+      const fastFail = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), fastFailMs));
+      await Promise.race([playPromise, fastFail]);
+
+      this.setStatus(this.liveEnabled ? "Playing" : "Prebuffering…");
+      this.warmStarted = true;
+    } catch (e) {
+      this.setStatus("Failed… trying next");
+      await this.tryNextStation(+1, { forcePlay: true });
+    }
+  },
+
+  async tryNextStation(direction, { forcePlay }) {
+    if (!this.loaded || !this.stations.length) return;
+
+    const now = performance.now();
+    if (now - this.lastSwitchAt < 120) return;
+    this.lastSwitchAt = now;
+
+    const next = this.index + (direction >= 0 ? 1 : -1);
+    this.index = ((next % this.stations.length) + this.stations.length) % this.stations.length;
+    this.updateUI();
+
+    if (forcePlay) {
+      await this.playIndexWithFastFail(this.index);
+      return;
+    }
+
+    if (this.audio) {
+      this.audio.pause();
+      this.audio.src = this.stations[this.index].url;
+      try { this.audio.load(); } catch (_) {}
+    }
+    this.setStatus("Selected");
+  },
+
+  async switchByKey(direction) {
+    if (!this.loaded || !this.stations.length) return;
+
+    this.ensureVisible();
+
+    // switching is a user gesture, so try play loudly if live, or keep muted if not live yet
+    await this.tryNextStation(direction, { forcePlay: true });
+
+    // if user is already in “live” phase, ensure unmuted
+    if (this.liveEnabled && this.audio) {
+      this.audio.muted = false;
+      if (this.audio.volume < 0.2) this.audio.volume = 0.6;
+      this.setStatus("Playing");
+    }
+  },
+};
+
+// keep widget aligned when page scrolls/resizes (important if you have centered layout)
+window.addEventListener("resize", () => RADIO.placeWidget());
+window.addEventListener("scroll", () => RADIO.placeWidget(), { passive: true });
+
+// =========================
+
 let levelData = [];
 let heroIdleFrames = [];
 let heroWalkFrames = [];
@@ -85,6 +407,7 @@ const input = {
   arrowPressedThisFrame: false,
 };
 
+// ----------------- INPUT -----------------
 window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") input.left = true;
   if (e.key === "ArrowRight") input.right = true;
@@ -97,6 +420,10 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     input.arrowPressedThisFrame = true;
   }
+
+  // Radio controls (Q/W)
+  if (e.key === "q" || e.key === "Q") RADIO.switchByKey(-1);
+  if (e.key === "w" || e.key === "W") RADIO.switchByKey(+1);
 });
 
 window.addEventListener("keyup", (e) => {
@@ -269,11 +596,6 @@ function loadFrameSequenceCounted(folder, count) {
   return Promise.all(promises).then(() => frames);
 }
 
-/**
- * Optional layer spec supports:
- * - { type:"frames", folder:"...", count: N, fps: 12, align:"bg"|"screen" }
- * - { type:"image",  src:"...", align:"bg"|"screen" }
- */
 async function loadOptionalLayer(levelId, layerSpec, layerName) {
   if (!layerSpec) return null;
 
@@ -560,6 +882,9 @@ const HOME = {
   promptArrows: "Use ← →",
 
   pauseMs: 0,
+
+  // Radio: trigger live only once
+  _radioWentLive: false,
 };
 
 function isHomeLevel() {
@@ -646,6 +971,7 @@ function enterHomeIntroMode() {
   HOME.active = true;
   HOME.phase = 0;
   HOME.phaseTimer = 0;
+  HOME._radioWentLive = false;
 
   state.gameplayEnabled = false;
   player.visible = false;
@@ -675,9 +1001,11 @@ function handoffHomeToGameplay() {
   setAnim(vx === 0 ? "idle" : "walk");
 
   HOME.active = false;
+
+  // Keep widget visible afterwards if it was shown
+  if (RADIO.loaded) RADIO.ensureVisible();
 }
 
-// commands overlay should be under hero (behind hero) in gameplay
 function drawCommandsOverlayUnderHero(dt) {
   if (!isHomeLevel()) return;
   if (!HOME.instrCommands) return;
@@ -697,17 +1025,20 @@ function updateAndDrawHome(dt) {
   // Phase 0
   if (HOME.phase === 0) {
     framePlayerUpdate(HOME.preStart, dt);
-    drawFrameSeq(HOME.preStart); // behind
-    drawBackground();            // on top
+    drawFrameSeq(HOME.preStart);
+    drawBackground();
 
     if (HOME.instrStart) {
       framePlayerUpdate(HOME.instrStart, dt);
-      drawFrameSeq(HOME.instrStart); // front of bg
+      drawFrameSeq(HOME.instrStart);
     }
 
     drawTopUI();
 
     if (input.enterPressedThisFrame) {
+      // IMPORTANT: start warmup here (user gesture)
+      RADIO.warmUpFromGesture();
+
       HOME.phase = 1;
       HOME.start1.timer = 0;
       HOME.start1.idx = 0;
@@ -719,8 +1050,8 @@ function updateAndDrawHome(dt) {
   // Phase 1
   if (HOME.phase === 1) {
     framePlayerUpdate(HOME.start1, dt);
-    drawFrameSeq(HOME.start1); // behind
-    drawBackground();          // on top
+    drawFrameSeq(HOME.start1);
+    drawBackground();
     drawTopUI();
 
     if (HOME.start1?.done) {
@@ -732,8 +1063,8 @@ function updateAndDrawHome(dt) {
 
   // Phase 2 pause
   if (HOME.phase === 2) {
-    drawHomeUnderlayIfAny(); // behind
-    drawBackground();        // on top
+    drawHomeUnderlayIfAny();
+    drawBackground();
     drawTopUI();
 
     HOME.phaseTimer += dt * 1000;
@@ -748,15 +1079,15 @@ function updateAndDrawHome(dt) {
 
   // Phase 3 start2
   if (HOME.phase === 3) {
-    drawHomeUnderlayIfAny(); // behind
-    drawBackground();        // on top
+    drawHomeUnderlayIfAny();
+    drawBackground();
 
     framePlayerUpdate(HOME.start2, dt);
-    drawFrameSeq(HOME.start2); // front
+    drawFrameSeq(HOME.start2);
     drawTopUI();
 
     if (HOME.start2?.done) {
-      HOME.phase = 4;
+      HOME.phase = 5; // jump directly to idle mode
       HOME.idle.timer = 0;
       HOME.idle.idx = 0;
       HOME.idle.done = false;
@@ -770,26 +1101,26 @@ function updateAndDrawHome(dt) {
     return;
   }
 
-  if (HOME.phase === 4) HOME.phase = 5;
-
-  // Phase 5: commands overlay must be UNDER hero once handoff happens.
-  // During intro, hero is hidden, but we keep same draw order: commands then idle (idle is character overlay),
-  // so commands is "behind" the intro character too.
+  // HOME idle mode (your “state 4”)
   if (HOME.phase === 5) {
-    drawHomeUnderlayIfAny(); // behind
-    drawBackground();        // on top
+    drawHomeUnderlayIfAny();
+    drawBackground();
 
-    // commands overlay under the intro character
     if (HOME.instrCommands) {
       framePlayerUpdate(HOME.instrCommands, dt);
       drawFrameSeq(HOME.instrCommands);
     }
 
-    // intro idle (character overlay) in front
     framePlayerUpdate(HOME.idle, dt);
     drawFrameSeq(HOME.idle);
 
     drawTopUI();
+
+    // RADIO: show widget + unmute/fade in (should be ready because warmup started earlier)
+    if (!HOME._radioWentLive) {
+      HOME._radioWentLive = true;
+      RADIO.goLive();
+    }
 
     if (input.arrowPressedThisFrame) {
       handoffHomeToGameplay();
@@ -845,6 +1176,9 @@ function loop(t) {
     if (!HOME.active) enterHomeIntroMode();
     updateAndDrawHome(dt);
 
+    // keep radio widget tracking canvas position even while hidden
+    if (RADIO.loaded) RADIO.placeWidget();
+
     input.enterPressedThisFrame = false;
     input.arrowPressedThisFrame = false;
 
@@ -882,18 +1216,21 @@ function loop(t) {
     finishTransition();
   }
 
+  // keep widget anchored if visible (and also keeps it ready if you resize)
+  if (RADIO.loaded) {
+    if (RADIO.visible) RADIO.placeWidget();
+  }
+
   // Draw normal level
   if (isHomeLevel()) {
-    drawLayer1(dt);   // underlay behind bg
-    drawBackground(); // bg on top
-    // commands overlay UNDER hero (but in front of bg)
+    drawLayer1(dt);
+    drawBackground();
     drawCommandsOverlayUnderHero(dt);
   } else {
     drawBackground();
     drawLayer1(dt);
   }
 
-  // hero above commands overlay
   drawPlayer();
 
   drawLayer2(dt);
@@ -909,7 +1246,11 @@ function loop(t) {
 }
 
 // ---------- Boot ----------
-Promise.all([loadLevels(), loadSprites()])
+Promise.all([
+  loadLevels(),
+  loadSprites(),
+  RADIO.loadStations(), // load radio.json early
+])
   .then(() => requestAnimationFrame(loop))
   .catch((e) => {
     console.error(e);
