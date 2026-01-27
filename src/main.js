@@ -30,8 +30,6 @@ const SPRITES = {
 const SPRITE_SCALE = 0.34;
 const FEET_FUDGE_PX = 0;
 const WALK_BOB_PX = 0; // 0 disables
-
-// 🔧 HOME HERO DROP OFFSET (THIS IS WHAT YOU TWEAK)
 const HOME_DROP_OFFSET_X = 40; // px → + right, - left
 // -------------------------------------------
 
@@ -232,11 +230,7 @@ function drawZoomPanFollow(img, zoom, followStrength) {
   const maxPan = Math.min(maxFromZoom, MAX_PAN_PX);
 
   const heroN = getHeroNormalizedX();
-  const pan = clamp(
-    heroN * maxPan * clamp(followStrength, 0, 1),
-    -maxPan,
-    maxPan
-  );
+  const pan = clamp(heroN * maxPan * clamp(followStrength, 0, 1), -maxPan, maxPan);
 
   const x = -(drawW - W) / 2 + pan;
   const y = -(drawH - H) / 2;
@@ -556,11 +550,16 @@ const HOME = {
   start1: null,
   start2: null,
   idle: null,
+
+  instrStart: null,
+  instrCommands: null,
+
   underlayImg: null,
 
   promptEnter: "Press Enter",
   promptArrows: "Use ← →",
-  pauseMs: 1000,
+
+  pauseMs: 0,
 };
 
 function isHomeLevel() {
@@ -597,19 +596,9 @@ function drawHomeUnderlayIfAny() {
   ctx.drawImage(HOME.underlayImg, 0, 0, W, H);
 }
 
+// remove temporary text prompts
 function drawHomePrompts() {
-  ctx.save();
-  ctx.font = "18px ui-sans-serif, system-ui";
-  ctx.fillStyle = "rgba(255,255,255,0.92)";
-  ctx.textAlign = "center";
-
-  if (HOME.phase === 0) {
-    ctx.fillText(HOME.promptEnter, W / 2, 640);
-  } else if (HOME.phase >= 4) {
-    ctx.fillText(HOME.promptArrows, W / 2, 640);
-  }
-
-  ctx.restore();
+  return;
 }
 
 async function loadHomeIntroAssetsIfNeeded() {
@@ -617,7 +606,10 @@ async function loadHomeIntroAssetsIfNeeded() {
   const spec = lvl?.homeIntro;
   if (!spec) return;
 
-  if (HOME.preStart && HOME.start1 && HOME.start2 && HOME.idle) return;
+  if (
+    HOME.preStart && HOME.start1 && HOME.start2 && HOME.idle &&
+    HOME.instrStart && HOME.instrCommands
+  ) return;
 
   HOME.promptEnter = spec.promptEnter || HOME.promptEnter;
   HOME.promptArrows = spec.promptArrows || HOME.promptArrows;
@@ -636,12 +628,16 @@ async function loadHomeIntroAssetsIfNeeded() {
     };
   };
 
-  HOME.preStart = await mkSeq(spec.preStart);
-  HOME.start1 = await mkSeq(spec.start1);
-  HOME.start2 = await mkSeq(spec.start2);
-  HOME.idle = await mkSeq(spec.idle);
+  if (!HOME.preStart) HOME.preStart = await mkSeq(spec.preStart);
+  if (!HOME.start1) HOME.start1 = await mkSeq(spec.start1);
+  if (!HOME.start2) HOME.start2 = await mkSeq(spec.start2);
+  if (!HOME.idle) HOME.idle = await mkSeq(spec.idle);
 
-  if (spec.start1?.underlay) {
+  const instr = spec.instructions || {};
+  if (!HOME.instrStart) HOME.instrStart = await mkSeq(instr.start);
+  if (!HOME.instrCommands) HOME.instrCommands = await mkSeq(instr.commands);
+
+  if (!HOME.underlayImg && spec.start1?.underlay) {
     HOME.underlayImg = await loadImage(spec.start1.underlay);
   }
 }
@@ -654,7 +650,10 @@ function enterHomeIntroMode() {
   state.gameplayEnabled = false;
   player.visible = false;
 
-  for (const seq of [HOME.preStart, HOME.start1, HOME.start2, HOME.idle]) {
+  for (const seq of [
+    HOME.preStart, HOME.start1, HOME.start2, HOME.idle,
+    HOME.instrStart, HOME.instrCommands
+  ]) {
     if (!seq) continue;
     seq.timer = 0;
     seq.idx = 0;
@@ -663,7 +662,6 @@ function enterHomeIntroMode() {
 }
 
 function handoffHomeToGameplay() {
-  // 🔧 Drop slightly right/left using HOME_DROP_OFFSET_X
   player.x = Math.floor(W / 2 - player.renderW / 2) + HOME_DROP_OFFSET_X;
   player.x = clamp(player.x, 0, W - player.renderW);
 
@@ -679,19 +677,34 @@ function handoffHomeToGameplay() {
   HOME.active = false;
 }
 
+// commands overlay should be under hero (behind hero) in gameplay
+function drawCommandsOverlayUnderHero(dt) {
+  if (!isHomeLevel()) return;
+  if (!HOME.instrCommands) return;
+
+  framePlayerUpdate(HOME.instrCommands, dt);
+  drawFrameSeq(HOME.instrCommands);
+}
+
 function updateAndDrawHome(dt) {
   if (!HOME.active) return;
 
   const drawTopUI = () => {
-    drawLayer3(dt);      // title.png
-    drawHomePrompts();   // optional text
+    drawLayer3(dt); // title
+    drawHomePrompts();
   };
 
-  // Phase 0: preStart BEHIND background
+  // Phase 0
   if (HOME.phase === 0) {
     framePlayerUpdate(HOME.preStart, dt);
     drawFrameSeq(HOME.preStart); // behind
     drawBackground();            // on top
+
+    if (HOME.instrStart) {
+      framePlayerUpdate(HOME.instrStart, dt);
+      drawFrameSeq(HOME.instrStart); // front of bg
+    }
+
     drawTopUI();
 
     if (input.enterPressedThisFrame) {
@@ -703,7 +716,7 @@ function updateAndDrawHome(dt) {
     return;
   }
 
-  // Phase 1: start1 BEHIND background
+  // Phase 1
   if (HOME.phase === 1) {
     framePlayerUpdate(HOME.start1, dt);
     drawFrameSeq(HOME.start1); // behind
@@ -717,7 +730,7 @@ function updateAndDrawHome(dt) {
     return;
   }
 
-  // Phase 2: underlay BEHIND background (pause)
+  // Phase 2 pause
   if (HOME.phase === 2) {
     drawHomeUnderlayIfAny(); // behind
     drawBackground();        // on top
@@ -733,7 +746,7 @@ function updateAndDrawHome(dt) {
     return;
   }
 
-  // Phase 3: start2 IN FRONT; underlay ALWAYS behind background
+  // Phase 3 start2
   if (HOME.phase === 3) {
     drawHomeUnderlayIfAny(); // behind
     drawBackground();        // on top
@@ -747,20 +760,35 @@ function updateAndDrawHome(dt) {
       HOME.idle.timer = 0;
       HOME.idle.idx = 0;
       HOME.idle.done = false;
+
+      if (HOME.instrCommands) {
+        HOME.instrCommands.timer = 0;
+        HOME.instrCommands.idx = 0;
+        HOME.instrCommands.done = false;
+      }
     }
     return;
   }
 
-  // Phase 4: immediately move to waiting state 5 (idle loop)
   if (HOME.phase === 4) HOME.phase = 5;
 
-  // Phase 5: idle IN FRONT; underlay ALWAYS behind background
+  // Phase 5: commands overlay must be UNDER hero once handoff happens.
+  // During intro, hero is hidden, but we keep same draw order: commands then idle (idle is character overlay),
+  // so commands is "behind" the intro character too.
   if (HOME.phase === 5) {
     drawHomeUnderlayIfAny(); // behind
     drawBackground();        // on top
 
+    // commands overlay under the intro character
+    if (HOME.instrCommands) {
+      framePlayerUpdate(HOME.instrCommands, dt);
+      drawFrameSeq(HOME.instrCommands);
+    }
+
+    // intro idle (character overlay) in front
     framePlayerUpdate(HOME.idle, dt);
-    drawFrameSeq(HOME.idle); // front
+    drawFrameSeq(HOME.idle);
+
     drawTopUI();
 
     if (input.arrowPressedThisFrame) {
@@ -781,7 +809,10 @@ function loop(t) {
 
   // HOME intro pipeline
   if (isHomeLevel() && !state.gameplayEnabled) {
-    if (!HOME.preStart || !HOME.start1 || !HOME.start2 || !HOME.idle) {
+    if (
+      !HOME.preStart || !HOME.start1 || !HOME.start2 || !HOME.idle ||
+      !HOME.instrStart || !HOME.instrCommands
+    ) {
       drawBackground();
       drawLayer3(dt);
 
@@ -804,7 +835,6 @@ function loop(t) {
           });
       }
 
-      // consume one-frame flags (AFTER processing this frame)
       input.enterPressedThisFrame = false;
       input.arrowPressedThisFrame = false;
 
@@ -815,7 +845,6 @@ function loop(t) {
     if (!HOME.active) enterHomeIntroMode();
     updateAndDrawHome(dt);
 
-    // consume one-frame flags (AFTER processing this frame)
     input.enterPressedThisFrame = false;
     input.arrowPressedThisFrame = false;
 
@@ -854,15 +883,17 @@ function loop(t) {
   }
 
   // Draw normal level
-  // HOME underlay (layer1) must ALWAYS be behind background
   if (isHomeLevel()) {
-    drawLayer1(dt);   // underlay first
-    drawBackground(); // then background on top
+    drawLayer1(dt);   // underlay behind bg
+    drawBackground(); // bg on top
+    // commands overlay UNDER hero (but in front of bg)
+    drawCommandsOverlayUnderHero(dt);
   } else {
     drawBackground();
     drawLayer1(dt);
   }
 
+  // hero above commands overlay
   drawPlayer();
 
   drawLayer2(dt);
@@ -871,7 +902,6 @@ function loop(t) {
 
   drawForeground();
 
-  // consume one-frame flags (AFTER processing this frame)
   input.enterPressedThisFrame = false;
   input.arrowPressedThisFrame = false;
 

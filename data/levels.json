@@ -43,6 +43,20 @@
           "count": 18,
           "fps": 12,
           "loop": true
+        },
+        "instructions": {
+          "start": {
+            "folder": "assets/levels/home/instructions/start",
+            "count": 36,
+            "fps": 12,
+            "loop": true
+          },
+          "commands": {
+            "folder": "assets/levels/home/instructions/commands",
+            "count": 6,
+            "fps": 12,
+            "loop": true
+          }
         }
       }
     },
