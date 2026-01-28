@@ -965,6 +965,11 @@ function drawPlayer() {
 }
 
 // ---------- Universe switching ----------
+// NEW BEHAVIOR:
+// - Trigger when hero CENTER crosses the portal line (x=0 or x=W),
+//   so the hero is half-way through.
+// - After switching, spawn half-inside the new universe so the half that
+//   already entered stays visible.
 function triggerEdge(edge) {
   if (state.transitioning) return;
   if (!state.gameplayEnabled) return;
@@ -978,13 +983,23 @@ function triggerEdge(edge) {
 function finishTransition() {
   state.levelIndex = state.lastEdge === "left" ? carouselMoveLeft() : carouselMoveRight();
 
-  if (state.lastEdge === "left") {
-    player.x = W - player.renderW - 2;
-    player.facing = -1;
-  } else {
-    player.x = 2;
-    player.facing = 1;
-  }
+  // Spawn half-in on the correct side:
+  // - came from LEFT edge => you were walking left => new level, appear on RIGHT, half-visible
+  // - came from RIGHT edge => you were walking right => new level, appear on LEFT, half-visible
+const w = player.renderW;
+const off = w * 0.25;     // 1/4 off-screen
+const visible = w * 0.75; // 3/4 visible
+
+if (state.lastEdge === "left") {
+  // come from left edge -> appear on right, 1/4 off to the right
+  player.x = W - visible; // == W - 0.75w
+  player.facing = -1;
+} else {
+  // come from right edge -> appear on left, 1/4 off to the left
+  player.x = -off;        // == -0.25w
+  player.facing = 1;
+}
+
 
   setAnim("idle");
   player.visible = true;
@@ -1337,13 +1352,20 @@ function loop(t) {
 
     player.x += vx * player.speed * dt;
 
-    if (player.x <= 0) {
-      player.x = 0;
-      triggerEdge("left");
-    } else if (player.x >= W - player.renderW) {
-      player.x = W - player.renderW;
-      triggerEdge("right");
-    }
+    // NEW: allow some off-screen travel so the HERO CENTER can cross the edge
+    // (portal swap happens at center crossing)
+    player.x = clamp(player.x, -player.renderW, W);
+
+   const w = player.renderW;
+const off = w * 0.35;       // trigger when 1/4 is off-screen
+const rightTriggerX = W - (w * 0.75); // == W - 0.75w
+
+if (vx < 0 && player.x <= -off) {
+  triggerEdge("left");
+} else if (vx > 0 && player.x >= rightTriggerX) {
+  triggerEdge("right");
+}
+
 
     const fps = currentFps();
     player.frameTimer += dt;
