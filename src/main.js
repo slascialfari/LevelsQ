@@ -42,6 +42,138 @@ const MAX_PAN_PX = 55;
 const DEFAULT_LAYER_FPS = 12;
 
 // =========================
+// HOME AMBIENT AUDIO (NEW)
+// =========================
+const HOME_AUDIO = {
+  // FIXED: "ome" -> "home"
+  ambientSrc: "assets/audio/home_ambient.mp3",
+
+  ambient: null,
+  _fadeRaf: 0,
+
+  init() {
+    if (this.ambient) return;
+
+    const a = new Audio(this.ambientSrc);
+    a.preload = "auto";
+    a.loop = true;
+    a.volume = 0;           // start silent, fade in on Enter
+    a.crossOrigin = "anonymous";
+    this.ambient = a;
+  },
+
+  // Smooth volume ramp using rAF
+  fadeTo(audio, targetVol, durationMs = 1000, { stopWhenZero = false } = {}) {
+    if (!audio) return;
+
+    // cancel any existing fade
+    if (this._fadeRaf) cancelAnimationFrame(this._fadeRaf);
+
+    const startVol = Number(audio.volume || 0);
+    const target = Math.max(0, Math.min(1, Number(targetVol)));
+    const dur = Math.max(1, Number(durationMs));
+    const t0 = performance.now();
+
+    const tick = (t) => {
+      const u = Math.max(0, Math.min(1, (t - t0) / dur));
+      // easeInOut (smooth)
+      const eased = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+      audio.volume = startVol + (target - startVol) * eased;
+
+      if (u < 1) {
+        this._fadeRaf = requestAnimationFrame(tick);
+      } else {
+        audio.volume = target;
+        this._fadeRaf = 0;
+
+        if (stopWhenZero && audio.volume <= 0.001) {
+          try { audio.pause(); } catch (_) {}
+        }
+      }
+    };
+
+    this._fadeRaf = requestAnimationFrame(tick);
+  },
+
+  // Called on Enter (user gesture)
+  async startAmbient({ target = 0.4, fadeMs = 1200 } = {}) {
+    this.init();
+    const a = this.ambient;
+    if (!a) return;
+
+    // If already playing, just fade up
+    if (!a.paused) {
+      this.fadeTo(a, target, fadeMs);
+      return;
+    }
+
+    // Ensure volume is 0 before play, then fade in
+    a.volume = 0;
+
+    try {
+      await a.play(); // should succeed because called from Enter gesture
+      this.fadeTo(a, target, fadeMs);
+    } catch (e) {
+      // If blocked for any reason, fail silently (you still have radio later)
+      console.warn("[HOME_AUDIO] Ambient play blocked:", e);
+    }
+  },
+
+  // Called when leaving HOME phase 3 -> phase 5 (crossfade moment)
+  stopAmbient({ fadeMs = 1200 } = {}) {
+    this.init();
+    const a = this.ambient;
+    if (!a) return;
+    this.fadeTo(a, 0, fadeMs, { stopWhenZero: true });
+  },
+};
+
+// =========================
+// HOME OVERLAY AUDIO (NEW)
+// =========================
+const HOME_OVERLAY = {
+  // Put your overlay file here:
+  // assets/audio/home_overlay.mp3
+  src: "assets/audio/home_overlay.mp3",
+
+  audio: null,
+
+  init() {
+    if (this.audio) return;
+
+    const a = new Audio(this.src);
+    a.preload = "auto";
+    a.loop = false;
+    a.volume = 1.0;
+    a.crossOrigin = "anonymous";
+    this.audio = a;
+  },
+
+  async playOnce({ volume = 1.0 } = {}) {
+    this.init();
+    const a = this.audio;
+    if (!a) return;
+
+    try {
+      a.pause();
+      a.currentTime = 0;
+      a.volume = Math.max(0, Math.min(1, volume));
+      await a.play();
+    } catch (e) {
+      console.warn("[HOME_OVERLAY] play blocked:", e);
+    }
+  },
+
+  stop() {
+    if (!this.audio) return;
+    try {
+      this.audio.pause();
+      this.audio.currentTime = 0;
+    } catch (_) {}
+  },
+};
+
+// =========================
 // RADIO
 // =========================
 const RADIO = {
@@ -133,50 +265,49 @@ const RADIO = {
   // Place widget OUTSIDE the canvas, aligned with canvas top-right corner,
   // but offset to the RIGHT so it does not overlap the canvas.
   placeWidget() {
-  if (!this.loaded || !this.widgetEl) return;
+    if (!this.loaded || !this.widgetEl) return;
 
-  const rect = canvas.getBoundingClientRect();
-  const gap = 12;
+    const rect = canvas.getBoundingClientRect();
+    const gap = 12;
 
-  // Measure widget (needs to be display:block at least once to measure properly)
-  const prevDisplay = this.widgetEl.style.display;
-  if (!this.visible) this.widgetEl.style.display = "block";
-  const wRect = this.widgetEl.getBoundingClientRect();
-  if (!this.visible) this.widgetEl.style.display = prevDisplay || "none";
+    // Measure widget (needs to be display:block at least once to measure properly)
+    const prevDisplay = this.widgetEl.style.display;
+    if (!this.visible) this.widgetEl.style.display = "block";
+    const wRect = this.widgetEl.getBoundingClientRect();
+    if (!this.visible) this.widgetEl.style.display = prevDisplay || "none";
 
-  // TARGET: above the canvas, right-aligned to canvas
-  let left = rect.right - wRect.width - gap;
-  let top = rect.top - wRect.height - gap;
+    // TARGET: above the canvas, right-aligned to canvas
+    let left = rect.right - wRect.width - gap;
+    let top = rect.top - wRect.height - gap;
 
-  const ww = window.innerWidth;
-  const wh = window.innerHeight;
+    const ww = window.innerWidth;
+    const wh = window.innerHeight;
 
-  // Clamp horizontally inside viewport
-  left = Math.max(8, Math.min(left, ww - wRect.width - 8));
+    // Clamp horizontally inside viewport
+    left = Math.max(8, Math.min(left, ww - wRect.width - 8));
 
-  // If there is not enough space ABOVE the canvas, fallback to the RIGHT side (like before)
-  if (top < 8) {
-    top = rect.top + gap;         // align with top of canvas
-    left = rect.right + gap;      // place to the right outside canvas
+    // If there is not enough space ABOVE the canvas, fallback to the RIGHT side (like before)
+    if (top < 8) {
+      top = rect.top + gap;         // align with top of canvas
+      left = rect.right + gap;      // place to the right outside canvas
 
-    // If no room on the right, place to the left outside canvas
-    if (left + wRect.width > ww - 8) {
-      left = rect.left - gap - wRect.width;
+      // If no room on the right, place to the left outside canvas
+      if (left + wRect.width > ww - 8) {
+        left = rect.left - gap - wRect.width;
+      }
+
+      // Final clamp
+      left = Math.max(8, Math.min(left, ww - wRect.width - 8));
+      top = Math.max(8, Math.min(top, wh - wRect.height - 8));
     }
 
-    // Final clamp
-    left = Math.max(8, Math.min(left, ww - wRect.width - 8));
+    // Normal clamp vertically (for the "above" placement)
     top = Math.max(8, Math.min(top, wh - wRect.height - 8));
-  }
 
-  // Normal clamp vertically (for the "above" placement)
-  top = Math.max(8, Math.min(top, wh - wRect.height - 8));
-
-  this.widgetEl.style.left = `${Math.round(left)}px`;
-  this.widgetEl.style.top = `${Math.round(top)}px`;
-  this._placedOnce = true;
-}
-,
+    this.widgetEl.style.left = `${Math.round(left)}px`;
+    this.widgetEl.style.top = `${Math.round(top)}px`;
+    this._placedOnce = true;
+  },
 
   ensureVisible() {
     if (!this.loaded || !this.widgetEl) return;
@@ -1039,6 +1170,9 @@ function updateAndDrawHome(dt) {
       // IMPORTANT: start warmup here (user gesture)
       RADIO.warmUpFromGesture();
 
+      // NEW: start home ambient (user gesture)
+      HOME_AUDIO.startAmbient({ target: 0.4, fadeMs: 1200 });
+
       HOME.phase = 1;
       HOME.start1.timer = 0;
       HOME.start1.idx = 0;
@@ -1057,6 +1191,9 @@ function updateAndDrawHome(dt) {
     if (HOME.start1?.done) {
       HOME.phase = 2;
       HOME.phaseTimer = 0;
+
+      // NEW: play overlay once at the beginning of phase 2
+      HOME_OVERLAY.playOnce({ volume: 1.0 });
     }
     return;
   }
@@ -1087,6 +1224,9 @@ function updateAndDrawHome(dt) {
     drawTopUI();
 
     if (HOME.start2?.done) {
+      // NEW: we’re about to enter idle/radio phase → fade out ambient
+      HOME_AUDIO.stopAmbient({ fadeMs: 1400 });
+
       HOME.phase = 5; // jump directly to idle mode
       HOME.idle.timer = 0;
       HOME.idle.idx = 0;
