@@ -516,6 +516,13 @@ const state = {
 
   // Gameplay enabled only after HOME handoff
   gameplayEnabled: false,
+
+  // Popup: has player left home at least once?
+  hasLeftHome: false,
+  // x where hero was originally dropped in (set on handoff)
+  dropX: null,
+  // prevent re-firing every frame while standing on the spot
+  popupTriggeredThisReturn: false,
 };
 
 const player = {
@@ -970,6 +977,57 @@ function drawPlayer() {
 //   so the hero is half-way through.
 // - After switching, spawn half-inside the new universe so the half that
 //   already entered stays visible.
+// ---------- Return popup ----------
+const POPUP = {
+  active: false,
+  timer: 0,
+  duration: 3.5,
+  fadeIn: 0.4,
+  fadeOut: 0.8,
+  text: "You've come full circle!",
+};
+
+function triggerReturnPopup() {
+  POPUP.active = true;
+  POPUP.timer = 0;
+}
+
+function drawPopup(dt) {
+  if (!POPUP.active) return;
+  POPUP.timer += dt;
+  const t = POPUP.timer;
+  const d = POPUP.duration;
+  if (t >= d) { POPUP.active = false; return; }
+
+  let alpha;
+  if (t < POPUP.fadeIn) {
+    alpha = t / POPUP.fadeIn;
+  } else if (t > d - POPUP.fadeOut) {
+    alpha = (d - t) / POPUP.fadeOut;
+  } else {
+    alpha = 1;
+  }
+  alpha = Math.max(0, Math.min(1, alpha));
+
+  const boxW = 360;
+  const boxH = 72;
+  const boxX = (W - boxW) / 2;
+  const boxY = H / 2 - boxH / 2;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+  ctx.beginPath();
+  ctx.roundRect(boxX, boxY, boxW, boxH, 14);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 26px ui-sans-serif, system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(POPUP.text, W / 2, boxY + boxH / 2);
+  ctx.restore();
+}
+
 function triggerEdge(edge) {
   if (state.transitioning) return;
   if (!state.gameplayEnabled) return;
@@ -981,7 +1039,13 @@ function triggerEdge(edge) {
 }
 
 function finishTransition() {
+  const wasHome = state.homeIndex !== -1 && state.levelIndex === state.homeIndex;
   state.levelIndex = state.lastEdge === "left" ? carouselMoveLeft() : carouselMoveRight();
+
+  if (wasHome) {
+    state.hasLeftHome = true;
+    state.popupTriggeredThisReturn = false; // reset so next visit can fire
+  }
 
   // Spawn half-in on the correct side:
   // - came from LEFT edge => you were walking left => new level, appear on RIGHT, half-visible
@@ -1136,6 +1200,7 @@ function enterHomeIntroMode() {
 function handoffHomeToGameplay() {
   player.x = Math.floor(W / 2 - player.renderW / 2) + HOME_DROP_OFFSET_X;
   player.x = clamp(player.x, 0, W - player.renderW);
+  state.dropX = player.x;
 
   if (input.left) player.facing = -1;
   if (input.right) player.facing = 1;
@@ -1366,6 +1431,18 @@ if (vx < 0 && player.x <= -off) {
   triggerEdge("right");
 }
 
+    // Check if player has walked back to the original drop-in x on home
+    if (
+      state.hasLeftHome &&
+      isHomeLevel() &&
+      state.dropX !== null &&
+      !state.popupTriggeredThisReturn &&
+      Math.abs(player.x - state.dropX) <= 12
+    ) {
+      state.popupTriggeredThisReturn = true;
+      triggerReturnPopup();
+    }
+
 
     const fps = currentFps();
     player.frameTimer += dt;
@@ -1400,6 +1477,8 @@ if (vx < 0 && player.x <= -off) {
   drawLayer4(dt);
 
   drawForeground();
+
+  drawPopup(dt);
 
   input.enterPressedThisFrame = false;
   input.arrowPressedThisFrame = false;
