@@ -523,6 +523,8 @@ const state = {
   dropX: null,
   // prevent re-firing every frame while standing on the spot
   popupTriggeredThisReturn: false,
+  // timestamp (performance.now()) when hero entered the current level
+  levelEnteredAt: 0,
 };
 
 const player = {
@@ -734,67 +736,106 @@ function loadFrameSequenceCounted(folder, count) {
   return Promise.all(promises).then(() => frames);
 }
 
+// ---------- Legacy layer loader (HOME level only) ----------
 async function loadOptionalLayer(levelId, layerSpec, layerName) {
   if (!layerSpec) return null;
-
   const type = String(layerSpec.type || "frames").toLowerCase();
   const align = String(layerSpec.align || "screen").toLowerCase();
   const safeAlign = align === "bg" ? "bg" : "screen";
 
   if (type === "image") {
     const src = layerSpec.src;
-    if (!src) {
-      warnOnce(
-        `${levelId}:${layerName}:missingSrc`,
-        `[${levelId}] ${layerName} type=image is missing "src". Skipping.`
-      );
-      return null;
-    }
-
+    if (!src) { warnOnce(`${levelId}:${layerName}:missingSrc`, `[${levelId}] ${layerName} type=image missing "src".`); return null; }
     try {
       const img = await loadImage(src);
       return { kind: "image", img, align: safeAlign };
     } catch (e) {
-      warnOnce(
-        `${levelId}:${layerName}:loadFail`,
-        `[${levelId}] Failed to load ${layerName} image. Skipping. (${e.message})`
-      );
+      warnOnce(`${levelId}:${layerName}:loadFail`, `[${levelId}] ${layerName} image failed. (${e.message})`);
       return null;
     }
   }
 
   if (type === "frames") {
     const count = Number(layerSpec.count || 0);
-    if (!count) return null;
-
     const folder = layerSpec.folder;
     const fps = Number(layerSpec.fps || DEFAULT_LAYER_FPS);
-
-    if (!folder) {
-      warnOnce(
-        `${levelId}:${layerName}:missingFolder`,
-        `[${levelId}] ${layerName} type=frames is missing "folder". Skipping.`
-      );
-      return null;
-    }
-
+    if (!count || !folder) { warnOnce(`${levelId}:${layerName}:missing`, `[${levelId}] ${layerName} missing count/folder.`); return null; }
     try {
       const frames = await loadFrameSequenceCounted(folder, count);
       return { kind: "frames", frames, fps, timer: 0, frameIndex: 0, align: safeAlign };
     } catch (e) {
-      warnOnce(
-        `${levelId}:${layerName}:loadFail`,
-        `[${levelId}] Failed to load ${layerName} frames. Skipping. (${e.message})`
-      );
+      warnOnce(`${levelId}:${layerName}:loadFail`, `[${levelId}] ${layerName} frames failed. (${e.message})`);
+      return null;
+    }
+  }
+  return null;
+}
+
+// ---------- New overlay/underlay loader (spec-driven from levels.json) ----------
+
+// Load a single layer from a spec entry in levels.json.
+// spec = { folder, type, rendering?, fps?, count?, parallax?, startMs?, ... }
+async function loadLayerFromSpec(levelId, spec) {
+  if (!spec?.folder) return null;
+
+  const base = `assets/levels/${levelId}/${spec.folder}`;
+  const type = String(spec.type || "frames").toLowerCase();
+  const rendering = String(spec.rendering || "loop").toLowerCase();
+  const parallax = Boolean(spec.parallax);
+  const startMs = Number(spec.startMs ?? 0);
+  const intervalMs = Number(spec.intervalMs ?? 0);
+  const randomInterval = Boolean(spec.randomInterval);
+  const minIntervalMs = Number(spec.minIntervalMs ?? 2000);
+  const maxIntervalMs = Number(spec.maxIntervalMs ?? 8000);
+  const repeatCount = Number(spec.repeatCount ?? -1);
+
+  const playState = {
+    frameIndex: 0,
+    frameTimer: 0,
+    phase: "idle",     // idle | playing | waiting
+    phaseTimer: 0,
+    playCount: 0,
+    nextIntervalMs: 0,
+  };
+
+  if (type === "static") {
+    const candidates = [`${base}/foreground.png`, `${base}/overlay.png`, `${base}/underlay.png`, `${base}/image.png`];
+    let img = null;
+    for (const src of candidates) {
+      try { img = await loadImage(src); break; } catch { /* try next */ }
+    }
+    if (!img) {
+      warnOnce(`${levelId}:${spec.folder}:noImage`, `[${levelId}] ${spec.folder}: no image found. Skipping.`);
+      return null;
+    }
+    return { kind: "static", img, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, playState };
+  }
+
+  if (type === "frames") {
+    const count = Number(spec.count || 0);
+    const fps = Number(spec.fps || DEFAULT_LAYER_FPS);
+    if (!count) {
+      warnOnce(`${levelId}:${spec.folder}:noCount`, `[${levelId}] ${spec.folder}: type=frames requires "count". Skipping.`);
+      return null;
+    }
+    try {
+      const frames = await loadFrameSequenceCounted(base, count);
+      return { kind: "frames", frames, fps, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, playState };
+    } catch (e) {
+      warnOnce(`${levelId}:${spec.folder}:loadFail`, `[${levelId}] ${spec.folder}: failed to load frames. (${e.message})`);
       return null;
     }
   }
 
-  warnOnce(
-    `${levelId}:${layerName}:unsupportedType`,
-    `[${levelId}] ${layerName} has unsupported type="${layerSpec.type}". Skipping.`
-  );
+  warnOnce(`${levelId}:${spec.folder}:badType`, `[${levelId}] ${spec.folder}: unsupported type="${spec.type}". Skipping.`);
   return null;
+}
+
+// Load an ordered array of layer specs (overlays or underlays) from levels.json.
+async function loadLayerSet(levelId, specs) {
+  if (!Array.isArray(specs)) return [];
+  const results = await Promise.all(specs.map((s) => loadLayerFromSpec(levelId, s)));
+  return results.filter(Boolean);
 }
 
 async function loadLevels() {
@@ -810,38 +851,35 @@ async function loadLevels() {
 
   for (const lvl of json.levels) {
     const id = lvl.id || "(missing id)";
-    const bgSrc = lvl.background;
 
-    if (!bgSrc) {
-      console.warn(`[${id}] Missing required "background". Level excluded.`);
+    // ---- HOME level: keep legacy layer loading intact ----
+    if (lvl.isHome) {
+      const bgSrc = lvl.background;
+      if (!bgSrc) { console.warn(`[${id}] HOME missing "background". Excluded.`); continue; }
+      try {
+        const bgImg = await loadImage(bgSrc);
+        const l1 = await loadOptionalLayer(id, lvl.layer1, "layer1");
+        const l2 = await loadOptionalLayer(id, lvl.layer2, "layer2");
+        const l3 = await loadOptionalLayer(id, lvl.layer3, "layer3");
+        const l4 = await loadOptionalLayer(id, lvl.layer4, "layer4");
+        loadedLevels.push(lvl);
+        levelAssets.set(id, { bgImg, fgImg: null, l1, l2, l3, l4, overlays: [], underlays: [] });
+      } catch (e) {
+        console.warn(`[${id}] HOME background failed. Excluded. (${e.message})`);
+      }
       continue;
     }
 
+    // ---- Normal gameplay level: background.png implicit, layers from levels.json ----
+    const bgSrc = `assets/levels/${id}/background.png`;
     try {
       const bgImg = await loadImage(bgSrc);
-
-      let fgImg = null;
-      if (lvl.foreground) {
-        try {
-          fgImg = await loadImage(lvl.foreground);
-        } catch (e) {
-          warnOnce(
-            `${id}:foreground:loadFail`,
-            `[${id}] Foreground failed to load; continuing without it. (${e.message})`
-          );
-          fgImg = null;
-        }
-      }
-
-      const l1 = await loadOptionalLayer(id, lvl.layer1, "layer1");
-      const l2 = await loadOptionalLayer(id, lvl.layer2, "layer2");
-      const l3 = await loadOptionalLayer(id, lvl.layer3, "layer3");
-      const l4 = await loadOptionalLayer(id, lvl.layer4, "layer4");
-
+      const overlays  = await loadLayerSet(id, lvl.overlays);
+      const underlays = await loadLayerSet(id, lvl.underlays);
       loadedLevels.push(lvl);
-      levelAssets.set(id, { bgImg, fgImg, l1, l2, l3, l4 });
+      levelAssets.set(id, { bgImg, overlays, underlays });
     } catch (e) {
-      console.warn(`[${id}] Background failed to load. Level excluded. (${e.message})`);
+      console.warn(`[${id}] background.png failed to load. Level excluded. (${e.message})`);
     }
   }
 
@@ -884,6 +922,7 @@ function drawBackground() {
   ctx.drawImage(assets.bgImg, 0, 0, W, H);
 }
 
+// HOME-only: keep legacy draw helpers for l1-l4 (used by home intro pipeline)
 function drawForeground() {
   const assets = currentLevelAssets();
   if (!assets?.fgImg) return;
@@ -892,26 +931,20 @@ function drawForeground() {
 
 function drawOptionalLayerAsset(layerAsset, dt) {
   if (!layerAsset) return;
-
   let img = null;
-
   if (layerAsset.kind === "image") {
     img = layerAsset.img;
   } else if (layerAsset.kind === "frames") {
     const frames = layerAsset.frames;
     if (!frames || frames.length === 0) return;
-
     layerAsset.timer += dt;
     const spf = 1 / Math.max(1, layerAsset.fps || DEFAULT_LAYER_FPS);
-
     while (layerAsset.timer >= spf) {
       layerAsset.timer -= spf;
       layerAsset.frameIndex = (layerAsset.frameIndex + 1) % frames.length;
     }
-
     img = frames[layerAsset.frameIndex];
   }
-
   if (!img) return;
   ctx.drawImage(img, 0, 0, W, H);
 }
@@ -928,6 +961,169 @@ function drawLayer1(dt) { drawLayerN("l1", dt); }
 function drawLayer2(dt) { drawLayerN("l2", dt); }
 function drawLayer3(dt) { drawLayerN("l3", dt); }
 function drawLayer4(dt) { drawLayerN("l4", dt); }
+
+// ---------- New overlay/underlay draw system ----------
+
+// Update and draw a single gameplay layer asset.
+// levelTime = seconds since hero entered this level (for once/intermittent).
+function updateAndDrawLayer(layer, dt, levelTime) {
+  const ps = layer.playState;
+
+  // Resolve the image to draw for this frame
+  let img = null;
+  let shouldDraw = true;
+
+  if (layer.kind === "static") {
+    img = layer.img;
+    // For "once" static: only show after startMs
+    if (layer.rendering === "once" && levelTime * 1000 < layer.startMs) shouldDraw = false;
+  } else if (layer.kind === "frames") {
+    const frames = layer.frames;
+    if (!frames || frames.length === 0) return;
+
+    if (layer.rendering === "loop") {
+      const hasInterval = layer.intervalMs > 0 || layer.randomInterval;
+
+      if (!hasInterval) {
+        // Simple back-to-back loop
+        ps.frameTimer += dt;
+        const spf = 1 / Math.max(1, layer.fps);
+        while (ps.frameTimer >= spf) {
+          ps.frameTimer -= spf;
+          ps.frameIndex = (ps.frameIndex + 1) % frames.length;
+        }
+      } else {
+        // Loop with interval between repetitions
+        if (ps.phase === "idle") {
+          ps.phase = "playing";
+          ps.frameIndex = 0;
+          ps.frameTimer = 0;
+        }
+        if (ps.phase === "playing") {
+          ps.frameTimer += dt;
+          const spf = 1 / Math.max(1, layer.fps);
+          while (ps.frameTimer >= spf) {
+            ps.frameTimer -= spf;
+            ps.frameIndex++;
+            if (ps.frameIndex >= frames.length) {
+              ps.frameIndex = 0;
+              // Completed one loop — enter wait phase
+              ps.phase = "waiting";
+              ps.nextIntervalMs = layer.randomInterval
+                ? layer.minIntervalMs + Math.random() * (layer.maxIntervalMs - layer.minIntervalMs)
+                : layer.intervalMs;
+              ps.phaseTimer = 0;
+              break;
+            }
+          }
+        }
+        if (ps.phase === "waiting") {
+          ps.phaseTimer += dt * 1000;
+          if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
+          shouldDraw = false;
+        }
+      }
+      img = frames[ps.frameIndex];
+
+    } else if (layer.rendering === "once") {
+      const ltMs = levelTime * 1000;
+      if (ltMs < layer.startMs) { shouldDraw = false; }
+      else {
+        if (ps.phase === "idle") { ps.phase = "playing"; ps.frameIndex = 0; ps.frameTimer = 0; }
+        if (ps.phase === "playing") {
+          ps.frameTimer += dt;
+          const spf = 1 / Math.max(1, layer.fps);
+          while (ps.frameTimer >= spf) {
+            ps.frameTimer -= spf;
+            ps.frameIndex++;
+            if (ps.frameIndex >= frames.length) { ps.frameIndex = frames.length - 1; ps.phase = "done"; break; }
+          }
+        }
+        img = frames[ps.frameIndex];
+      }
+
+    } else if (layer.rendering === "intermittent") {
+      const ltMs = levelTime * 1000;
+      if (ltMs < layer.startMs) { shouldDraw = false; }
+      else {
+        if (ps.phase === "idle") { ps.phase = "playing"; ps.frameIndex = 0; ps.frameTimer = 0; }
+        if (ps.phase === "playing") {
+          ps.frameTimer += dt;
+          const spf = 1 / Math.max(1, layer.fps);
+          while (ps.frameTimer >= spf) {
+            ps.frameTimer -= spf;
+            ps.frameIndex++;
+            if (ps.frameIndex >= frames.length) {
+              ps.frameIndex = 0;
+              ps.playCount++;
+              if (layer.repeatCount >= 0 && ps.playCount >= layer.repeatCount) {
+                ps.phase = "done"; break;
+              }
+              ps.phase = "waiting";
+              ps.nextIntervalMs = layer.randomInterval
+                ? layer.minIntervalMs + Math.random() * (layer.maxIntervalMs - layer.minIntervalMs)
+                : layer.intervalMs;
+              ps.phaseTimer = 0;
+              break;
+            }
+          }
+        }
+        if (ps.phase === "waiting") {
+          ps.phaseTimer += dt * 1000;
+          if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
+          shouldDraw = false;
+        }
+        if (ps.phase === "done") { shouldDraw = false; }
+        else img = frames[ps.frameIndex];
+      }
+    }
+  }
+
+  if (!shouldDraw || !img) return;
+
+  if (layer.parallax) {
+    drawZoomPanFollow(img, FG_ZOOM, FG_FOLLOW);
+  } else {
+    ctx.drawImage(img, 0, 0, W, H);
+  }
+}
+
+// Draw order: underlay[max]...underlay[1] → hero → overlay[1]...overlay[max]
+function drawUnderlays(dt) {
+  const assets = currentLevelAssets();
+  if (!assets?.underlays?.length) return;
+  const lt = (performance.now() - (state.levelEnteredAt ?? performance.now())) / 1000;
+  // Draw from highest index (furthest back) to lowest (closest to hero)
+  for (let i = assets.underlays.length - 1; i >= 0; i--) {
+    updateAndDrawLayer(assets.underlays[i], dt, lt);
+  }
+}
+
+function drawOverlays(dt) {
+  const assets = currentLevelAssets();
+  if (!assets?.overlays?.length) return;
+  const lt = (performance.now() - (state.levelEnteredAt ?? performance.now())) / 1000;
+  // Draw from lowest index (closest to hero) to highest (on top of everything)
+  for (let i = 0; i < assets.overlays.length; i++) {
+    updateAndDrawLayer(assets.overlays[i], dt, lt);
+  }
+}
+
+// Reset per-level playback state when entering a new level
+function resetLevelLayerStates(id) {
+  const assets = levelAssets.get(id);
+  if (!assets) return;
+  const reset = (layer) => {
+    layer.playState.frameIndex = 0;
+    layer.playState.frameTimer = 0;
+    layer.playState.phase = "idle";
+    layer.playState.phaseTimer = 0;
+    layer.playState.playCount = 0;
+    layer.playState.nextIntervalMs = 0;
+  };
+  assets.overlays?.forEach(reset);
+  assets.underlays?.forEach(reset);
+}
 
 // ---------- Player ----------
 function currentFrames() {
@@ -1068,6 +1264,11 @@ if (state.lastEdge === "left") {
   setAnim("idle");
   player.visible = true;
   state.transitioning = false;
+
+  // Reset layer animation states and start level timer for the new level
+  const newLvl = levelData[state.levelIndex];
+  if (newLvl) resetLevelLayerStates(newLvl.id);
+  state.levelEnteredAt = performance.now();
 }
 
 // =========================
@@ -1201,6 +1402,7 @@ function handoffHomeToGameplay() {
   player.x = Math.floor(W / 2 - player.renderW / 2) + HOME_DROP_OFFSET_X;
   player.x = clamp(player.x, 0, W - player.renderW);
   state.dropX = player.x;
+  state.levelEnteredAt = performance.now();
 
   if (input.left) player.facing = -1;
   if (input.right) player.facing = 1;
@@ -1462,21 +1664,23 @@ if (vx < 0 && player.x <= -off) {
 
   // Draw normal level
   if (isHomeLevel()) {
+    // HOME uses legacy layer system (untouched)
     drawLayer1(dt);
     drawBackground();
     drawCommandsOverlayUnderHero(dt);
+    drawPlayer();
+    drawLayer2(dt);
+    drawLayer3(dt);
+    drawLayer4(dt);
+    drawForeground();
   } else {
+    // Gameplay levels use new overlay/underlay system
+    // Order (back → front): background → underlays → hero → overlays
     drawBackground();
-    drawLayer1(dt);
+    drawUnderlays(dt);
+    drawPlayer();
+    drawOverlays(dt);
   }
-
-  drawPlayer();
-
-  drawLayer2(dt);
-  drawLayer3(dt);
-  drawLayer4(dt);
-
-  drawForeground();
 
   drawPopup(dt);
 
