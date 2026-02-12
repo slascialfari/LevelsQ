@@ -64,27 +64,73 @@
       "id": "001",
       "name": "Level 001",
       "underlays": [
-        { "folder": "underlay01", "type": "frames", "rendering": "loop", "fps": 12, "count": 72 }
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "loop",
+          "fps": 12,
+          "count": 72
+        }
       ],
       "overlays": [
-        { "folder": "overlay01", "type": "static" }
+        {
+          "folder": "overlay01",
+          "type": "static"
+        }
       ]
     },
     {
       "id": "002",
       "name": "Level 002",
       "overlays": [
-        { "folder": "overlay01", "type": "static", "parallax": true }
+        {
+          "folder": "overlay01",
+          "type": "static",
+          "parallax": true
+        }
       ]
     },
     {
       "id": "003",
       "name": "Level 003",
       "underlays": [
-        { "folder": "underlay01", "type": "frames", "rendering": "loop", "fps": 12, "count": 36 }
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "loop",
+          "fps": 12,
+          "count": 36
+        }
       ],
       "overlays": [
-        { "folder": "overlay01", "type": "static", "parallax": true }
+        {
+          "folder": "overlay01",
+          "type": "static",
+          "parallax": true
+        }
+      ]
+    },
+    {
+      "id": "004",
+      "name": "Level 004",
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static"
+        },
+        {
+          "folder": "overlay02",
+          "type": "frames",
+          "rendering": "once",
+          "fps": 16,
+          "count": 77,
+          "startMs": 3500
+        },
+        {
+          "folder": "overlay03",
+          "type": "static",
+          "parallax": true
+        }
       ]
     }
   ]
