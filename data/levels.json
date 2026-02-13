@@ -69,7 +69,8 @@
           "type": "frames",
           "rendering": "loop",
           "fps": 12,
-          "count": 72
+          "count": 72,
+          "showFirstFrame": false
         }
       ],
       "overlays": [
@@ -99,7 +100,8 @@
           "type": "frames",
           "rendering": "loop",
           "fps": 12,
-          "count": 36
+          "count": 36,
+          "showFirstFrame": false
         }
       ],
       "overlays": [
@@ -124,7 +126,8 @@
           "rendering": "once",
           "fps": 16,
           "count": 77,
-          "startMs": 3500
+          "startMs": 3500,
+          "showFirstFrame": false
         },
         {
           "folder": "overlay03",

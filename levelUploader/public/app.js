@@ -108,6 +108,7 @@ function addLayer(kind) {
       minIntervalMs: 2000,
       maxIntervalMs: 8000,
       repeatCount: -1,
+      showFirstFrame: false,
     },
   };
 
@@ -216,6 +217,12 @@ function wireLayerConfig(card, layer, listEl) {
   randomCheck.addEventListener("change", () => {
     layer.config.randomInterval = randomCheck.checked;
     updateVisibility();
+  });
+
+  // Show first frame during interval
+  const showFirstFrameCheck = card.querySelector(".show-first-frame-check");
+  showFirstFrameCheck.addEventListener("change", () => {
+    layer.config.showFirstFrame = showFirstFrameCheck.checked;
   });
 
   // Numeric inputs

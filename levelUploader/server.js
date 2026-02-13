@@ -199,6 +199,7 @@ app.post("/api/upload/:id?", upload.any(), (req, res) => {
         if (uc.repeatCount !== undefined && Number(uc.repeatCount) !== -1) {
           entry.repeatCount = Number(uc.repeatCount);
         }
+        if (uc.showFirstFrame) entry.showFirstFrame = true;
         underlaysJson.push(entry);
       }
     }
@@ -248,6 +249,7 @@ app.post("/api/upload/:id?", upload.any(), (req, res) => {
         if (oc.repeatCount !== undefined && Number(oc.repeatCount) !== -1) {
           entry.repeatCount = Number(oc.repeatCount);
         }
+        if (oc.showFirstFrame) entry.showFirstFrame = true;
         overlaysJson.push(entry);
       }
     }

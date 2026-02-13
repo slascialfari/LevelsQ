@@ -788,6 +788,7 @@ async function loadLayerFromSpec(levelId, spec) {
   const minIntervalMs = Number(spec.minIntervalMs ?? 2000);
   const maxIntervalMs = Number(spec.maxIntervalMs ?? 8000);
   const repeatCount = Number(spec.repeatCount ?? -1);
+  const showFirstFrame = Boolean(spec.showFirstFrame);
 
   const playState = {
     frameIndex: 0,
@@ -808,7 +809,7 @@ async function loadLayerFromSpec(levelId, spec) {
       warnOnce(`${levelId}:${spec.folder}:noImage`, `[${levelId}] ${spec.folder}: no image found. Skipping.`);
       return null;
     }
-    return { kind: "static", img, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, playState };
+    return { kind: "static", img, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
   }
 
   if (type === "frames") {
@@ -820,7 +821,7 @@ async function loadLayerFromSpec(levelId, spec) {
     }
     try {
       const frames = await loadFrameSequenceCounted(base, count);
-      return { kind: "frames", frames, fps, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, playState };
+      return { kind: "frames", frames, fps, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
     } catch (e) {
       warnOnce(`${levelId}:${spec.folder}:loadFail`, `[${levelId}] ${spec.folder}: failed to load frames. (${e.message})`);
       return null;
@@ -1020,7 +1021,8 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         if (ps.phase === "waiting") {
           ps.phaseTimer += dt * 1000;
           if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
-          shouldDraw = false;
+          if (layer.showFirstFrame) { ps.frameIndex = 0; }
+          else { shouldDraw = false; }
         }
       }
       img = frames[ps.frameIndex];
@@ -1071,7 +1073,8 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         if (ps.phase === "waiting") {
           ps.phaseTimer += dt * 1000;
           if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
-          shouldDraw = false;
+          if (layer.showFirstFrame) { ps.frameIndex = 0; }
+          else { shouldDraw = false; }
         }
         if (ps.phase === "done") { shouldDraw = false; }
         else img = frames[ps.frameIndex];
