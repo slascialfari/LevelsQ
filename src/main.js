@@ -1695,13 +1695,28 @@ if (vx < 0 && player.x <= -off) {
   requestAnimationFrame(loop);
 }
 
+// ---------- Debug: ?debug=true&lvl=5 → jump to level 005 ----------
+function applyDebugParams() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("debug") !== "true") return;
+  const lvl = params.get("lvl");
+  if (!lvl) return;
+  const targetId = String(lvl).padStart(3, "0");
+  const idx = levelData.findIndex((l) => l.id === targetId);
+  if (idx === -1) { console.warn(`[debug] level "${targetId}" not found`); return; }
+  state.levelIndex = idx;
+  state.carousel = [idx];
+  state.carouselPos = 0;
+  console.log(`[debug] jumping to level ${targetId}`);
+}
+
 // ---------- Boot ----------
 Promise.all([
   loadLevels(),
   loadSprites(),
   RADIO.loadStations(), // load radio.json early
 ])
-  .then(() => requestAnimationFrame(loop))
+  .then(() => { applyDebugParams(); requestAnimationFrame(loop); })
   .catch((e) => {
     console.error(e);
     ctx.clearRect(0, 0, W, H);
