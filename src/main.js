@@ -1046,8 +1046,10 @@ function updateAndDrawLayer(layer, dt, levelTime) {
 
     } else if (layer.rendering === "intermittent") {
       const ltMs = levelTime * 1000;
-      if (ltMs < layer.startMs) { shouldDraw = false; }
-      else {
+      if (ltMs < layer.startMs) {
+        if (layer.showFirstFrame) { img = frames[0]; }
+        else { shouldDraw = false; }
+      } else {
         if (ps.phase === "idle") { ps.phase = "playing"; ps.frameIndex = 0; ps.frameTimer = 0; }
         if (ps.phase === "playing") {
           ps.frameTimer += dt;
