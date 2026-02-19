@@ -788,6 +788,7 @@ async function loadLayerFromSpec(levelId, spec) {
   const minIntervalMs = Number(spec.minIntervalMs ?? 2000);
   const maxIntervalMs = Number(spec.maxIntervalMs ?? 8000);
   const repeatCount = Number(spec.repeatCount ?? -1);
+  const showFirstFrame = Boolean(spec.showFirstFrame);
 
   const playState = {
     frameIndex: 0,
@@ -808,7 +809,7 @@ async function loadLayerFromSpec(levelId, spec) {
       warnOnce(`${levelId}:${spec.folder}:noImage`, `[${levelId}] ${spec.folder}: no image found. Skipping.`);
       return null;
     }
-    return { kind: "static", img, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, playState };
+    return { kind: "static", img, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
   }
 
   if (type === "frames") {
@@ -820,7 +821,7 @@ async function loadLayerFromSpec(levelId, spec) {
     }
     try {
       const frames = await loadFrameSequenceCounted(base, count);
-      return { kind: "frames", frames, fps, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, playState };
+      return { kind: "frames", frames, fps, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
     } catch (e) {
       warnOnce(`${levelId}:${spec.folder}:loadFail`, `[${levelId}] ${spec.folder}: failed to load frames. (${e.message})`);
       return null;
@@ -1020,7 +1021,8 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         if (ps.phase === "waiting") {
           ps.phaseTimer += dt * 1000;
           if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
-          shouldDraw = false;
+          if (layer.showFirstFrame) { ps.frameIndex = 0; }
+          else { shouldDraw = false; }
         }
       }
       img = frames[ps.frameIndex];
@@ -1044,8 +1046,10 @@ function updateAndDrawLayer(layer, dt, levelTime) {
 
     } else if (layer.rendering === "intermittent") {
       const ltMs = levelTime * 1000;
-      if (ltMs < layer.startMs) { shouldDraw = false; }
-      else {
+      if (ltMs < layer.startMs) {
+        if (layer.showFirstFrame) { img = frames[0]; }
+        else { shouldDraw = false; }
+      } else {
         if (ps.phase === "idle") { ps.phase = "playing"; ps.frameIndex = 0; ps.frameTimer = 0; }
         if (ps.phase === "playing") {
           ps.frameTimer += dt;
@@ -1071,7 +1075,8 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         if (ps.phase === "waiting") {
           ps.phaseTimer += dt * 1000;
           if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
-          shouldDraw = false;
+          if (layer.showFirstFrame) { ps.frameIndex = 0; }
+          else { shouldDraw = false; }
         }
         if (ps.phase === "done") { shouldDraw = false; }
         else img = frames[ps.frameIndex];
@@ -1690,13 +1695,28 @@ if (vx < 0 && player.x <= -off) {
   requestAnimationFrame(loop);
 }
 
+// ---------- Debug: ?debug=true&lvl=5 → jump to level 005 ----------
+function applyDebugParams() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("debug") !== "true") return;
+  const lvl = params.get("lvl");
+  if (!lvl) return;
+  const targetId = String(lvl).padStart(3, "0");
+  const idx = levelData.findIndex((l) => l.id === targetId);
+  if (idx === -1) { console.warn(`[debug] level "${targetId}" not found`); return; }
+  state.levelIndex = idx;
+  state.carousel = [idx];
+  state.carouselPos = 0;
+  console.log(`[debug] jumping to level ${targetId}`);
+}
+
 // ---------- Boot ----------
 Promise.all([
   loadLevels(),
   loadSprites(),
   RADIO.loadStations(), // load radio.json early
 ])
-  .then(() => requestAnimationFrame(loop))
+  .then(() => { applyDebugParams(); requestAnimationFrame(loop); })
   .catch((e) => {
     console.error(e);
     ctx.clearRect(0, 0, W, H);

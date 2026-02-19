@@ -35,18 +35,18 @@
     <section class="section">
       <div class="section-header">
         <h2>Underlays</h2>
-        <button type="button" class="add-btn" id="addUnderlay">+ Add Underlay</button>
       </div>
       <div id="underlayLayers"></div>
+      <button type="button" class="add-btn" id="addUnderlay">+ Add Underlay</button>
     </section>
 
     <!-- Overlays -->
     <section class="section">
       <div class="section-header">
         <h2>Overlays</h2>
-        <button type="button" class="add-btn" id="addOverlay">+ Add Overlay</button>
       </div>
       <div id="overlayLayers"></div>
+      <button type="button" class="add-btn" id="addOverlay">+ Add Overlay</button>
     </section>
 
     <!-- Upload -->
@@ -127,6 +127,9 @@
           <div class="config-row">
             <label>Repeat count <span class="hint">(-1 = infinite)</span></label>
             <input type="number" class="repeat-count-input" value="-1" min="-1">
+          </div>
+          <div class="config-row">
+            <label><input type="checkbox" class="show-first-frame-check"> Show first frame during interval</label>
           </div>
         </div>
       </div>

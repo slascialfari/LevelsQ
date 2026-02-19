@@ -69,7 +69,8 @@
           "type": "frames",
           "rendering": "loop",
           "fps": 12,
-          "count": 72
+          "count": 72,
+          "showFirstFrame": false
         }
       ],
       "overlays": [
@@ -99,7 +100,8 @@
           "type": "frames",
           "rendering": "loop",
           "fps": 12,
-          "count": 36
+          "count": 36,
+          "showFirstFrame": false
         }
       ],
       "overlays": [
@@ -124,12 +126,66 @@
           "rendering": "once",
           "fps": 16,
           "count": 77,
-          "startMs": 3500
+          "startMs": 3500,
+          "showFirstFrame": false
         },
         {
           "folder": "overlay03",
           "type": "static",
           "parallax": true
+        }
+      ]
+    },
+    {
+      "id": "005",
+      "name": "Level 005",
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "static"
+        },
+        {
+          "folder": "underlay02",
+          "type": "frames",
+          "rendering": "intermittent",
+          "fps": 12,
+          "count": 24,
+          "startMs": 2000,
+          "randomInterval": true,
+          "minIntervalMs": 4000,
+          "maxIntervalMs": 8000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "intermittent",
+          "fps": 12,
+          "count": 11,
+          "startMs": 2500,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 5000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay04",
+          "type": "frames",
+          "rendering": "intermittent",
+          "fps": 12,
+          "count": 18,
+          "startMs": 1000,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 5000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay05",
+          "type": "frames",
+          "rendering": "loop",
+          "fps": 12,
+          "count": 5
         }
       ]
     }
