@@ -525,6 +525,12 @@ const state = {
   popupTriggeredThisReturn: false,
   // timestamp (performance.now()) when hero entered the current level
   levelEnteredAt: 0,
+
+  // Track which level indices the player has actually set foot on
+  visitedLevels: new Set(),
+
+  // Debug: only HOME in carousel (no other levels)
+  homeOnly: false,
 };
 
 const player = {
@@ -630,7 +636,7 @@ function initCarouselWithHomeOrFallback() {
 }
 
 function carouselMoveRight() {
-  if (levelData.length <= 1) return state.levelIndex;
+  if (levelData.length <= 1 || state.homeOnly) return state.levelIndex;
 
   const nonHome = nonHomeIndices();
   const allUsed = usedNonHomeCount() >= nonHome.length;
@@ -652,7 +658,7 @@ function carouselMoveRight() {
 }
 
 function carouselMoveLeft() {
-  if (levelData.length <= 1) return state.levelIndex;
+  if (levelData.length <= 1 || state.homeOnly) return state.levelIndex;
 
   const nonHome = nonHomeIndices();
   const allUsed = usedNonHomeCount() >= nonHome.length;
@@ -1242,6 +1248,7 @@ function triggerEdge(edge) {
 function finishTransition() {
   const wasHome = state.homeIndex !== -1 && state.levelIndex === state.homeIndex;
   state.levelIndex = state.lastEdge === "left" ? carouselMoveLeft() : carouselMoveRight();
+  state.visitedLevels.add(state.levelIndex);
 
   if (wasHome) {
     state.hasLeftHome = true;
@@ -1301,6 +1308,15 @@ const HOME = {
 
   // Radio: trigger live only once
   _radioWentLive: false,
+
+  // Outro sequences
+  outro1: null,
+  outro2: null,
+  outro3: null,
+  outroUnderlayImg: null,
+  outroPauseMs: 1000,
+  outroRadioMuteFrame: 1,
+  _outroRadioMuted: false,
 };
 
 function isHomeLevel() {
@@ -1349,7 +1365,8 @@ async function loadHomeIntroAssetsIfNeeded() {
 
   if (
     HOME.preStart && HOME.start1 && HOME.start2 && HOME.idle &&
-    HOME.instrStart && HOME.instrCommands
+    HOME.instrStart && HOME.instrCommands &&
+    HOME.outro1 && HOME.outro2 && HOME.outro3
   ) return;
 
   HOME.promptEnter = spec.promptEnter || HOME.promptEnter;
@@ -1381,6 +1398,21 @@ async function loadHomeIntroAssetsIfNeeded() {
   if (!HOME.underlayImg && spec.start1?.underlay) {
     HOME.underlayImg = await loadImage(spec.start1.underlay);
   }
+
+  // Load outro assets
+  const outroSpec = lvl?.homeOutro;
+  if (outroSpec) {
+    HOME.outroPauseMs = Number(outroSpec.pauseMs ?? HOME.outroPauseMs);
+    HOME.outroRadioMuteFrame = Number(outroSpec.outro2?.radioMuteAtFrame ?? 1);
+
+    if (!HOME.outro1) HOME.outro1 = await mkSeq(outroSpec.outro1);
+    if (!HOME.outro2) HOME.outro2 = await mkSeq(outroSpec.outro2);
+    if (!HOME.outro3) HOME.outro3 = await mkSeq(outroSpec.outro3);
+
+    if (!HOME.outroUnderlayImg && outroSpec.outro3?.underlay) {
+      HOME.outroUnderlayImg = await loadImage(outroSpec.outro3.underlay);
+    }
+  }
 }
 
 function enterHomeIntroMode() {
@@ -1394,8 +1426,26 @@ function enterHomeIntroMode() {
 
   for (const seq of [
     HOME.preStart, HOME.start1, HOME.start2, HOME.idle,
-    HOME.instrStart, HOME.instrCommands
+    HOME.instrStart, HOME.instrCommands,
+    HOME.outro1, HOME.outro2, HOME.outro3
   ]) {
+    if (!seq) continue;
+    seq.timer = 0;
+    seq.idx = 0;
+    seq.done = false;
+  }
+}
+
+function triggerOutro() {
+  state.gameplayEnabled = false;
+  player.visible = false;
+
+  HOME.active = true;
+  HOME.phase = 10;
+  HOME.phaseTimer = 0;
+  HOME._outroRadioMuted = false;
+
+  for (const seq of [HOME.outro1, HOME.outro2, HOME.outro3]) {
     if (!seq) continue;
     seq.timer = 0;
     seq.idx = 0;
@@ -1554,6 +1604,108 @@ function updateAndDrawHome(dt) {
     }
     return;
   }
+
+  // ========== OUTRO PHASES ==========
+
+  // Phase 10: Play outro_1 (2 frames, once)
+  if (HOME.phase === 10) {
+    drawBackground();
+    framePlayerUpdate(HOME.outro1, dt);
+    drawFrameSeq(HOME.outro1);
+
+    if (HOME.outro1?.done) {
+      HOME.phase = 11;
+      HOME.outro2.timer = 0;
+      HOME.outro2.idx = 0;
+      HOME.outro2.done = false;
+    }
+    return;
+  }
+
+  // Phase 11: Play outro_2 (10 frames, once) with underlay; mute radio at specified frame
+  if (HOME.phase === 11) {
+    if (HOME.outroUnderlayImg) {
+      ctx.drawImage(HOME.outroUnderlayImg, 0, 0, W, H);
+    }
+    drawBackground();
+
+    framePlayerUpdate(HOME.outro2, dt);
+    drawFrameSeq(HOME.outro2);
+
+    // Mute radio and hide widget at the specified frame
+    if (!HOME._outroRadioMuted && HOME.outro2.idx >= HOME.outroRadioMuteFrame) {
+      HOME._outroRadioMuted = true;
+      if (RADIO.audio) {
+        RADIO.audio.muted = true;
+      }
+      if (RADIO.widgetEl) {
+        RADIO.widgetEl.style.display = "none";
+        RADIO.visible = false;
+      }
+      HOME_AUDIO.startAmbient({ target: 0.4, fadeMs: 1200 });
+    }
+
+    if (HOME.outro2?.done) {
+      HOME.phase = 12;
+      HOME.phaseTimer = 0;
+      HOME_OVERLAY.playOnce({ volume: 1.0 });
+    }
+    return;
+  }
+
+  // Phase 12: Pause (adjustable delay). Show underlay. home_overlay.mp3 plays.
+  if (HOME.phase === 12) {
+    if (HOME.outroUnderlayImg) {
+      ctx.drawImage(HOME.outroUnderlayImg, 0, 0, W, H);
+    }
+    drawBackground();
+
+    HOME.phaseTimer += dt * 1000;
+    if (HOME.phaseTimer >= HOME.outroPauseMs) {
+      HOME.phase = 13;
+      HOME.outro3.timer = 0;
+      HOME.outro3.idx = 0;
+      HOME.outro3.done = false;
+    }
+    return;
+  }
+
+  // Phase 13: Play outro_3 (20 frames, once), under background
+  if (HOME.phase === 13) {
+    framePlayerUpdate(HOME.outro3, dt);
+    drawFrameSeq(HOME.outro3);
+    drawBackground();
+
+    if (HOME.outro3?.done) {
+      HOME.phase = 14;
+    }
+    return;
+  }
+
+  // Phase 14: Outro complete — return to introPreStart_idle
+  if (HOME.phase === 14) {
+    // Reset game state
+    state.hasLeftHome = false;
+    state.popupTriggeredThisReturn = false;
+    state.dropX = null;
+    state.visitedLevels.clear();
+
+    // Reset radio fully so it can warm up fresh on next Enter
+    RADIO.warmStarted = false;
+    RADIO.liveEnabled = false;
+    if (RADIO.audio) {
+      try { RADIO.audio.pause(); } catch (_) {}
+      RADIO.audio.muted = true;
+      RADIO.audio.volume = 0;
+    }
+
+    // Stop overlay audio (ambient keeps playing seamlessly into phase 0)
+    HOME_OVERLAY.stop();
+
+    // Return to intro phase 0
+    enterHomeIntroMode();
+    return;
+  }
 }
 
 // ---------- Loop ----------
@@ -1569,7 +1721,8 @@ function loop(t) {
   if (isHomeLevel() && !state.gameplayEnabled) {
     if (
       !HOME.preStart || !HOME.start1 || !HOME.start2 || !HOME.idle ||
-      !HOME.instrStart || !HOME.instrCommands
+      !HOME.instrStart || !HOME.instrCommands ||
+      !HOME.outro1 || !HOME.outro2 || !HOME.outro3
     ) {
       drawBackground();
       drawLayer3(dt);
@@ -1639,15 +1792,17 @@ if (vx < 0 && player.x <= -off) {
 }
 
     // Check if player has walked back to the original drop-in x on home
+    // Only trigger if ALL non-home levels have been visited (full loop)
     if (
       state.hasLeftHome &&
       isHomeLevel() &&
       state.dropX !== null &&
       !state.popupTriggeredThisReturn &&
-      Math.abs(player.x - state.dropX) <= 12
+      Math.abs(player.x - state.dropX) <= 12 &&
+      (state.homeOnly || nonHomeIndices().every(i => state.visitedLevels.has(i)))
     ) {
       state.popupTriggeredThisReturn = true;
-      triggerReturnPopup();
+      triggerOutro();
     }
 
 
@@ -1670,12 +1825,15 @@ if (vx < 0 && player.x <= -off) {
   // Draw normal level
   if (isHomeLevel()) {
     // HOME uses legacy layer system (untouched)
+    // Hide title + instructions when returning after a full loop
+    const fullLoop = state.hasLeftHome &&
+      (state.homeOnly || nonHomeIndices().every(i => state.visitedLevels.has(i)));
     drawLayer1(dt);
     drawBackground();
-    drawCommandsOverlayUnderHero(dt);
+    if (!fullLoop) drawCommandsOverlayUnderHero(dt);
     drawPlayer();
     drawLayer2(dt);
-    drawLayer3(dt);
+    if (!fullLoop) drawLayer3(dt);
     drawLayer4(dt);
     drawForeground();
   } else {
@@ -1696,9 +1854,20 @@ if (vx < 0 && player.x <= -off) {
 }
 
 // ---------- Debug: ?debug=true&lvl=5 → jump to level 005 ----------
+// Also: ?debug=true&homeOnly=true → carousel stays on HOME only
 function applyDebugParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get("debug") !== "true") return;
+
+  if (params.get("homeOnly") === "true" && state.homeIndex !== -1) {
+    state.homeOnly = true;
+    state.carousel = [state.homeIndex];
+    state.carouselPos = 0;
+    state.levelIndex = state.homeIndex;
+    console.log("[debug] homeOnly mode — carousel locked to HOME");
+    return;
+  }
+
   const lvl = params.get("lvl");
   if (!lvl) return;
   const targetId = String(lvl).padStart(3, "0");
