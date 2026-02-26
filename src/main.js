@@ -808,7 +808,10 @@ async function loadLayerFromSpec(levelId, spec) {
   };
 
   if (type === "static") {
-    const candidates = [`${base}/foreground.png`, `${base}/overlay.png`, `${base}/underlay.png`, `${base}/image.png`];
+    const isUnderlay = spec.folder.startsWith("underlay");
+    const candidates = isUnderlay
+      ? [`${base}/underlay.png`, `${base}/overlay.png`, `${base}/image.png`]
+      : [`${base}/overlay.png`, `${base}/underlay.png`, `${base}/image.png`];
     let img = null;
     for (const src of candidates) {
       try { img = await loadImage(src); break; } catch { /* try next */ }
