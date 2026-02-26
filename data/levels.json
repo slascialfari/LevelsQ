@@ -86,11 +86,14 @@
     {
       "id": "001",
       "name": "Level 001",
+      "category": "common",
+      "rarity": 1,
       "underlays": [
         {
           "folder": "underlay01",
           "type": "frames",
           "rendering": "loop",
+          "animation": "loop",
           "fps": 12,
           "count": 72,
           "showFirstFrame": false
@@ -106,6 +109,8 @@
     {
       "id": "002",
       "name": "Level 002",
+      "category": "common",
+      "rarity": 1,
       "overlays": [
         {
           "folder": "overlay01",
@@ -117,11 +122,14 @@
     {
       "id": "003",
       "name": "Level 003",
+      "category": "common",
+      "rarity": 1,
       "underlays": [
         {
           "folder": "underlay01",
           "type": "frames",
           "rendering": "loop",
+          "animation": "loop",
           "fps": 12,
           "count": 36,
           "showFirstFrame": false
@@ -138,6 +146,8 @@
     {
       "id": "004",
       "name": "Level 004",
+      "category": "common",
+      "rarity": 1,
       "overlays": [
         {
           "folder": "overlay01",
@@ -147,6 +157,7 @@
           "folder": "overlay02",
           "type": "frames",
           "rendering": "once",
+          "animation": "loop",
           "fps": 16,
           "count": 77,
           "startMs": 3500,
@@ -162,6 +173,8 @@
     {
       "id": "005",
       "name": "Level 005",
+      "category": "common",
+      "rarity": 1,
       "underlays": [
         {
           "folder": "underlay01",
@@ -171,6 +184,7 @@
           "folder": "underlay02",
           "type": "frames",
           "rendering": "intermittent",
+          "animation": "loop",
           "fps": 12,
           "count": 24,
           "startMs": 2000,
@@ -183,6 +197,7 @@
           "folder": "underlay03",
           "type": "frames",
           "rendering": "intermittent",
+          "animation": "loop",
           "fps": 12,
           "count": 11,
           "startMs": 2500,
@@ -195,6 +210,7 @@
           "folder": "underlay04",
           "type": "frames",
           "rendering": "intermittent",
+          "animation": "loop",
           "fps": 12,
           "count": 18,
           "startMs": 1000,
@@ -207,8 +223,53 @@
           "folder": "underlay05",
           "type": "frames",
           "rendering": "loop",
+          "animation": "loop",
           "fps": 12,
           "count": 5
+        }
+      ]
+    },
+    {
+      "id": "006",
+      "name": "Level 006",
+      "category": "common",
+      "rarity": 2,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 13,
+          "startMs": 6000,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 6000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay02",
+          "type": "static"
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "pingpong",
+          "fps": 4,
+          "count": 6
+        }
+      ],
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static"
+        },
+        {
+          "folder": "overlay02",
+          "type": "static",
+          "parallax": true
         }
       ]
     }
