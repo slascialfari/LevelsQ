@@ -787,6 +787,7 @@ async function loadLayerFromSpec(levelId, spec) {
   const base = `assets/levels/${levelId}/${spec.folder}`;
   const type = String(spec.type || "frames").toLowerCase();
   const rendering = String(spec.rendering || "loop").toLowerCase();
+  const animation = String(spec.animation || "loop").toLowerCase(); // "loop" | "pingpong"
   const parallax = Boolean(spec.parallax);
   const startMs = Number(spec.startMs ?? 0);
   const intervalMs = Number(spec.intervalMs ?? 0);
@@ -803,6 +804,7 @@ async function loadLayerFromSpec(levelId, spec) {
     phaseTimer: 0,
     playCount: 0,
     nextIntervalMs: 0,
+    direction: 1,      // 1 = forward, -1 = reverse (for pingpong)
   };
 
   if (type === "static") {
@@ -815,7 +817,7 @@ async function loadLayerFromSpec(levelId, spec) {
       warnOnce(`${levelId}:${spec.folder}:noImage`, `[${levelId}] ${spec.folder}: no image found. Skipping.`);
       return null;
     }
-    return { kind: "static", img, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
+    return { kind: "static", img, parallax, rendering, animation, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
   }
 
   if (type === "frames") {
@@ -827,7 +829,7 @@ async function loadLayerFromSpec(levelId, spec) {
     }
     try {
       const frames = await loadFrameSequenceCounted(base, count);
-      return { kind: "frames", frames, fps, parallax, rendering, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
+      return { kind: "frames", frames, fps, parallax, rendering, animation, startMs, intervalMs, randomInterval, minIntervalMs, maxIntervalMs, repeatCount, showFirstFrame, playState };
     } catch (e) {
       warnOnce(`${levelId}:${spec.folder}:loadFail`, `[${levelId}] ${spec.folder}: failed to load frames. (${e.message})`);
       return null;
@@ -971,6 +973,31 @@ function drawLayer4(dt) { drawLayerN("l4", dt); }
 
 // ---------- New overlay/underlay draw system ----------
 
+/**
+ * Advance frame index by one step, respecting animation mode.
+ * For "loop": wraps around (0→1→…→N-1→0).
+ * For "pingpong": bounces (0→1→…→N-1→N-2→…→0→1→…).
+ * Returns true if a full cycle completed (hit the end in loop, or returned to 0 in pingpong).
+ */
+function advanceFrame(ps, frameCount, animation) {
+  if (animation === "pingpong") {
+    ps.frameIndex += ps.direction;
+    if (ps.frameIndex >= frameCount - 1) {
+      ps.frameIndex = frameCount - 1;
+      ps.direction = -1;
+    }
+    if (ps.frameIndex <= 0) {
+      ps.frameIndex = 0;
+      if (ps.direction === -1) { ps.direction = 1; return true; } // full cycle
+    }
+    return false;
+  }
+  // default: loop
+  ps.frameIndex++;
+  if (ps.frameIndex >= frameCount) { ps.frameIndex = 0; return true; }
+  return false;
+}
+
 // Update and draw a single gameplay layer asset.
 // levelTime = seconds since hero entered this level (for once/intermittent).
 function updateAndDrawLayer(layer, dt, levelTime) {
@@ -997,7 +1024,7 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         const spf = 1 / Math.max(1, layer.fps);
         while (ps.frameTimer >= spf) {
           ps.frameTimer -= spf;
-          ps.frameIndex = (ps.frameIndex + 1) % frames.length;
+          advanceFrame(ps, frames.length, layer.animation);
         }
       } else {
         // Loop with interval between repetitions
@@ -1011,10 +1038,9 @@ function updateAndDrawLayer(layer, dt, levelTime) {
           const spf = 1 / Math.max(1, layer.fps);
           while (ps.frameTimer >= spf) {
             ps.frameTimer -= spf;
-            ps.frameIndex++;
-            if (ps.frameIndex >= frames.length) {
-              ps.frameIndex = 0;
-              // Completed one loop — enter wait phase
+            const cycled = advanceFrame(ps, frames.length, layer.animation);
+            if (cycled) {
+              // Completed one cycle — enter wait phase
               ps.phase = "waiting";
               ps.nextIntervalMs = layer.randomInterval
                 ? layer.minIntervalMs + Math.random() * (layer.maxIntervalMs - layer.minIntervalMs)
@@ -1026,7 +1052,7 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         }
         if (ps.phase === "waiting") {
           ps.phaseTimer += dt * 1000;
-          if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
+          if (ps.phaseTimer >= ps.nextIntervalMs) { ps.phase = "playing"; ps.direction = 1; }
           if (layer.showFirstFrame) { ps.frameIndex = 0; }
           else { shouldDraw = false; }
         }
@@ -1043,8 +1069,9 @@ function updateAndDrawLayer(layer, dt, levelTime) {
           const spf = 1 / Math.max(1, layer.fps);
           while (ps.frameTimer >= spf) {
             ps.frameTimer -= spf;
-            ps.frameIndex++;
-            if (ps.frameIndex >= frames.length) { ps.frameIndex = frames.length - 1; ps.phase = "done"; break; }
+            const cycled = advanceFrame(ps, frames.length, layer.animation);
+            if (layer.animation !== "pingpong" && cycled) { ps.frameIndex = frames.length - 1; ps.phase = "done"; break; }
+            if (layer.animation === "pingpong" && cycled) { ps.frameIndex = 0; ps.phase = "done"; break; }
           }
         }
         img = frames[ps.frameIndex];
@@ -1062,9 +1089,8 @@ function updateAndDrawLayer(layer, dt, levelTime) {
           const spf = 1 / Math.max(1, layer.fps);
           while (ps.frameTimer >= spf) {
             ps.frameTimer -= spf;
-            ps.frameIndex++;
-            if (ps.frameIndex >= frames.length) {
-              ps.frameIndex = 0;
+            const cycled = advanceFrame(ps, frames.length, layer.animation);
+            if (cycled) {
               ps.playCount++;
               if (layer.repeatCount >= 0 && ps.playCount >= layer.repeatCount) {
                 ps.phase = "done"; break;
@@ -1080,7 +1106,7 @@ function updateAndDrawLayer(layer, dt, levelTime) {
         }
         if (ps.phase === "waiting") {
           ps.phaseTimer += dt * 1000;
-          if (ps.phaseTimer >= ps.nextIntervalMs) ps.phase = "playing";
+          if (ps.phaseTimer >= ps.nextIntervalMs) { ps.phase = "playing"; ps.direction = 1; }
           if (layer.showFirstFrame) { ps.frameIndex = 0; }
           else { shouldDraw = false; }
         }

@@ -6,6 +6,8 @@ const state = {
   backgroundFile: null,
   overlays: [],   // [{ files: [], config: {} }]
   underlays: [],  // [{ files: [], config: {} }]
+  category: "common",
+  rarity: 1,
   existingLevels: [],
   nextId: "001",
 };
@@ -21,6 +23,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("addUnderlay").addEventListener("click", () => addLayer("underlay"));
   document.getElementById("uploadBtn").addEventListener("click", uploadLevel);
   document.getElementById("levelTarget").addEventListener("change", onTargetChange);
+
+  document.getElementById("categorySelect").addEventListener("change", (e) => {
+    state.category = e.target.value;
+  });
+  document.getElementById("rarityInput").addEventListener("input", (e) => {
+    state.rarity = Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1));
+  });
 });
 
 async function fetchLevels() {
@@ -59,9 +68,18 @@ function onTargetChange() {
   const warn = document.getElementById("overwriteWarning");
   if (val === "__new__") {
     warn.classList.add("hidden");
+    state.category = "common";
+    state.rarity = 1;
   } else {
     warn.classList.remove("hidden");
+    const existing = state.existingLevels.find((l) => l.id === val);
+    if (existing) {
+      state.category = existing.category || "common";
+      state.rarity = existing.rarity || 1;
+    }
   }
+  document.getElementById("categorySelect").value = state.category;
+  document.getElementById("rarityInput").value = state.rarity;
   updateUploadBtn();
 }
 
@@ -100,6 +118,7 @@ function addLayer(kind) {
     config: {
       type: "static",
       rendering: "loop",
+      animation: "loop",
       fps: 12,
       parallax: false,
       startMs: 0,
@@ -206,6 +225,12 @@ function wireLayerConfig(card, layer, listEl) {
   // FPS
   fpsInput.addEventListener("input", () => {
     layer.config.fps = parseInt(fpsInput.value, 10) || 12;
+  });
+
+  // Animation
+  const animationSel = card.querySelector(".animation-select");
+  animationSel.addEventListener("change", () => {
+    layer.config.animation = animationSel.value;
   });
 
   // Parallax
@@ -418,6 +443,8 @@ async function uploadLevel() {
 
     // Build config JSON
     const config = {
+      category: state.category,
+      rarity: state.rarity,
       underlays: state.underlays.map((l) => l.config),
       overlays: state.overlays.map((l) => l.config),
     };
@@ -462,9 +489,13 @@ async function uploadLevel() {
     state.backgroundFile = null;
     state.overlays = [];
     state.underlays = [];
+    state.category = "common";
+    state.rarity = 1;
     document.getElementById("bgFiles").innerHTML = "";
     document.getElementById("overlayLayers").innerHTML = "";
     document.getElementById("underlayLayers").innerHTML = "";
+    document.getElementById("categorySelect").value = "common";
+    document.getElementById("rarityInput").value = "1";
 
     // Refresh level list
     await fetchLevels();

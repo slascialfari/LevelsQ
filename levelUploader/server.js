@@ -186,6 +186,7 @@ app.post("/api/upload/:id?", upload.any(), (req, res) => {
           folder: folderName,
           type: "frames",
           rendering: uc.rendering || "loop",
+          animation: uc.animation || "loop",
           fps: Number(uc.fps) || 12,
           count,
         };
@@ -235,6 +236,7 @@ app.post("/api/upload/:id?", upload.any(), (req, res) => {
           folder: folderName,
           type: "frames",
           rendering: oc.rendering || "loop",
+          animation: oc.animation || "loop",
           fps: Number(oc.fps) || 12,
           count,
         };
@@ -260,6 +262,8 @@ app.post("/api/upload/:id?", upload.any(), (req, res) => {
     const levelEntry = {
       id: levelId,
       name: `Level ${levelId}`,
+      category: config.category || "common",
+      rarity: Number(config.rarity) || 1,
     };
     if (underlaysJson.length > 0) levelEntry.underlays = underlaysJson;
     if (overlaysJson.length > 0) levelEntry.overlays = overlaysJson;
