@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Level Uploader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Level Uploader</h1>
+      <div class="level-selector">
+        <label for="levelTarget">Target:</label>
+        <select id="levelTarget">
+          <!-- Populated by JS: "New level (004)" + existing levels -->
+        </select>
+        <div id="overwriteWarning" class="warning hidden">
+          This will completely replace all files and config for this level.
+        </div>
+      </div>
+    </header>
+
+    <!-- Category & Rarity -->
+    <section class="section">
+      <h2>Classification</h2>
+      <div class="config-row">
+        <label for="categorySelect">Category</label>
+        <select id="categorySelect">
+          <option value="common" selected>Common</option>
+          <option value="special">Special</option>
+        </select>
+      </div>
+      <div class="config-row">
+        <label for="rarityInput">Rarity <span class="hint">(1–10)</span></label>
+        <input type="number" id="rarityInput" value="1" min="1" max="10">
+      </div>
+    </section>
+
+    <!-- Background -->
+    <section class="section">
+      <h2>Background</h2>
+      <div class="dropzone" id="bgDropzone" data-field="background">
+        <p>Drop background image here or <button type="button" class="browse-btn">browse</button></p>
+        <input type="file" accept="image/*" hidden>
+      </div>
+      <div class="file-list" id="bgFiles"></div>
+    </section>
+
+    <!-- Underlays -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Underlays</h2>
+      </div>
+      <div id="underlayLayers"></div>
+      <button type="button" class="add-btn" id="addUnderlay">+ Add Underlay</button>
+    </section>
+
+    <!-- Overlays -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Overlays</h2>
+      </div>
+      <div id="overlayLayers"></div>
+      <button type="button" class="add-btn" id="addOverlay">+ Add Overlay</button>
+    </section>
+
+    <!-- Upload -->
+    <div class="upload-bar">
+      <button type="button" id="uploadBtn" class="upload-btn" disabled>Upload Level</button>
+      <div id="status" class="status">Drop a background image to get started.</div>
+    </div>
+  </div>
+
+  <!-- Layer template (cloned by JS) -->
+  <template id="layerTemplate">
+    <div class="layer-card" data-kind="" data-index="">
+      <div class="layer-card-header">
+        <span class="layer-title"></span>
+        <button type="button" class="remove-layer-btn" title="Remove">&times;</button>
+      </div>
+
+      <div class="dropzone layer-dropzone">
+        <p>Drop files here or <button type="button" class="browse-btn">browse</button></p>
+        <input type="file" accept="image/*" multiple hidden>
+      </div>
+      <div class="file-list"></div>
+
+      <div class="config-row">
+        <label>Type</label>
+        <div class="radio-group">
+          <label><input type="radio" name="" value="static" checked> Static</label>
+          <label><input type="radio" name="" value="frames"> Frames</label>
+        </div>
+      </div>
+
+      <!-- Parallax (overlays only) -->
+      <div class="config-row parallax-row hidden">
+        <label><input type="checkbox" class="parallax-check"> Parallax</label>
+      </div>
+
+      <!-- Frames-specific options -->
+      <div class="frames-options hidden">
+        <div class="config-row">
+          <label>Rendering</label>
+          <select class="rendering-select">
+            <option value="loop">Loop</option>
+            <option value="once">Once</option>
+            <option value="intermittent">Intermittent</option>
+          </select>
+        </div>
+        <div class="config-row">
+          <label>FPS</label>
+          <input type="number" class="fps-input" value="12" min="1" max="120">
+        </div>
+        <div class="config-row">
+          <label>Animation</label>
+          <select class="animation-select">
+            <option value="loop">Loop</option>
+            <option value="pingpong">Ping-pong</option>
+          </select>
+        </div>
+
+        <!-- once / intermittent options -->
+        <div class="timed-options hidden">
+          <div class="config-row">
+            <label>Start delay (ms)</label>
+            <input type="number" class="start-ms-input" value="0" min="0">
+          </div>
+        </div>
+
+        <div class="intermittent-options hidden">
+          <div class="config-row">
+            <label>Interval (ms)</label>
+            <input type="number" class="interval-ms-input" value="0" min="0">
+          </div>
+          <div class="config-row">
+            <label><input type="checkbox" class="random-interval-check"> Random interval</label>
+          </div>
+          <div class="random-interval-options hidden">
+            <div class="config-row">
+              <label>Min interval (ms)</label>
+              <input type="number" class="min-interval-input" value="2000" min="0">
+            </div>
+            <div class="config-row">
+              <label>Max interval (ms)</label>
+              <input type="number" class="max-interval-input" value="8000" min="0">
+            </div>
+          </div>
+          <div class="config-row">
+            <label>Repeat count <span class="hint">(-1 = infinite)</span></label>
+            <input type="number" class="repeat-count-input" value="-1" min="-1">
+          </div>
+          <div class="config-row">
+            <label><input type="checkbox" class="show-first-frame-check"> Show first frame during interval</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

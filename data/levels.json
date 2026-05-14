@@ -5,59 +5,273 @@
       "name": "Home",
       "isHome": true,
       "background": "assets/levels/home/background.png",
-
-      "layer2": { "type": "image", "src": "assets/levels/home/overlay.png", "align": "bg" },
-      "layer3": { "type": "image", "src": "assets/levels/home/title.png",  "align": "screen" },
-      "layer4": { "type": "image", "src": "assets/levels/home/arrows.png", "align": "screen" }
+      "layer1": {
+        "type": "image",
+        "src": "assets/levels/home/introStart_1/staticUnderlay/underlay.png",
+        "align": "screen"
+      },
+      "layer3": {
+        "type": "image",
+        "src": "assets/levels/home/title.png",
+        "align": "screen"
+      },
+      "homeIntro": {
+        "promptEnter": "Ned needs a break — press Enter to send him for a walk.",
+        "promptArrows": "Use ← → to start walking.",
+        "preStart": {
+          "folder": "assets/levels/home/introPreStart_idle",
+          "count": 18,
+          "fps": 12,
+          "loop": true
+        },
+        "start1": {
+          "folder": "assets/levels/home/introStart_1",
+          "count": 12,
+          "fps": 12,
+          "loop": false,
+          "underlay": "assets/levels/home/introStart_1/staticUnderlay/underlay.png"
+        },
+        "pauseMs": 1000,
+        "start2": {
+          "folder": "assets/levels/home/introStart_2",
+          "count": 32,
+          "fps": 12,
+          "loop": false
+        },
+        "idle": {
+          "folder": "assets/levels/home/introStart_idle",
+          "count": 18,
+          "fps": 12,
+          "loop": true
+        },
+        "instructions": {
+          "start": {
+            "folder": "assets/levels/home/instructions/start",
+            "count": 36,
+            "fps": 12,
+            "loop": true
+          },
+          "commands": {
+            "folder": "assets/levels/home/instructions/commands",
+            "count": 6,
+            "fps": 12,
+            "loop": true
+          }
+        }
+      },
+      "homeOutro": {
+        "outro1": {
+          "folder": "assets/levels/home/outro_1",
+          "count": 2,
+          "fps": 12,
+          "loop": false
+        },
+        "outro2": {
+          "folder": "assets/levels/home/outro_2",
+          "count": 10,
+          "fps": 12,
+          "loop": false,
+          "radioMuteAtFrame": 1
+        },
+        "outro3": {
+          "folder": "assets/levels/home/outro_3",
+          "count": 20,
+          "fps": 12,
+          "loop": false,
+          "underlay": "assets/levels/home/outro_3/staticUnderlay/underlay.png"
+        },
+        "pauseMs": 1000
+      }
     },
     {
       "id": "001",
       "name": "Level 001",
-      "background": "assets/levels/001/background.png",
-
-      "layer1": {
-        "type": "frames",
-        "folder": "assets/levels/001/layer1",
-        "count": 72,
-        "fps": 12,
-        "align": "bg"
-      },
-
-      "layer2": {
-        "type": "image",
-        "src": "assets/levels/001/overlay.png",
-        "align": "bg"
-      }
+      "category": "common",
+      "rarity": 1,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 12,
+          "count": 72,
+          "showFirstFrame": false
+        }
+      ],
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static"
+        }
+      ]
     },
-
     {
       "id": "002",
       "name": "Level 002",
-      "background": "assets/levels/002/background.png",
-      "foreground": "assets/levels/002/foreground.png"
+      "category": "common",
+      "rarity": 1,
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static",
+          "parallax": true
+        }
+      ]
     },
-
     {
       "id": "003",
       "name": "Level 003",
-      "background": "assets/levels/003/background.PNG",
-      "foreground": "assets/levels/003/foreground.PNG"
+      "category": "common",
+      "rarity": 1,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 12,
+          "count": 36,
+          "showFirstFrame": false
+        }
+      ],
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static",
+          "parallax": true
+        }
+      ]
     },
-
     {
       "id": "004",
       "name": "Level 004",
-      "background": "assets/levels/004/background.png",
-
-      "layer1": {
-        "type": "frames",
-        "folder": "assets/levels/004/layer1",
-        "count": 36,
-        "fps": 12,
-        "align": "bg"
-      },
-
-      "foreground": "assets/levels/004/foreground.png"
+      "category": "common",
+      "rarity": 1,
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static"
+        },
+        {
+          "folder": "overlay02",
+          "type": "frames",
+          "rendering": "once",
+          "animation": "loop",
+          "fps": 16,
+          "count": 77,
+          "startMs": 3500,
+          "showFirstFrame": false
+        },
+        {
+          "folder": "overlay03",
+          "type": "static",
+          "parallax": true
+        }
+      ]
+    },
+    {
+      "id": "005",
+      "name": "Level 005",
+      "category": "common",
+      "rarity": 1,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "static"
+        },
+        {
+          "folder": "underlay02",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 24,
+          "startMs": 2000,
+          "randomInterval": true,
+          "minIntervalMs": 4000,
+          "maxIntervalMs": 8000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 11,
+          "startMs": 2500,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 5000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay04",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 18,
+          "startMs": 1000,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 5000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay05",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 12,
+          "count": 5
+        }
+      ]
+    },
+    {
+      "id": "006",
+      "name": "Level 006",
+      "category": "common",
+      "rarity": 2,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 13,
+          "startMs": 6000,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 6000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay02",
+          "type": "static"
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "pingpong",
+          "fps": 4,
+          "count": 6
+        }
+      ],
+      "overlays": [
+        {
+          "folder": "overlay01",
+          "type": "static"
+        },
+        {
+          "folder": "overlay02",
+          "type": "static",
+          "parallax": true
+        }
+      ]
     }
   ]
 }
