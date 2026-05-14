@@ -223,7 +223,6 @@ const RADIO = {
       // main audio element
       this.audio = new Audio();
       this.audio.preload = "none";
-      this.audio.crossOrigin = "anonymous";
       this.audio.volume = 0;
 
       this.audio.addEventListener("playing", () => {
@@ -244,7 +243,6 @@ const RADIO = {
       this.preloads = this.stations.map((st) => {
         const a = new Audio();
         a.preload = "auto";
-        a.crossOrigin = "anonymous";
         a.src = st.url;
         try { a.load(); } catch (_) {}
         return { audio: a, ready: false, url: st.url };
