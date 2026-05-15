@@ -501,6 +501,8 @@ let heroWalkFrames = [];
 
 // Runtime state for secondary characters (parallel to SECONDARY_SPRITES)
 const secondaryStates = [];
+let secondaryActivated = false; // set to true once sprites are assigned (on first HOME departure)
+let assignedSpriteDir = 0;     // direction sprites walk (-1 left / 1 right), set at assignment
 
 // levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null, l3|null, l4|null }
 const levelAssets = new Map();
@@ -966,13 +968,103 @@ async function loadAllSecondarySprites() {
   }
 }
 
-// Resolves a carousel position (0=HOME, 1=first right of HOME, …) to a level ID.
-function levelIdByOrder(order) {
-  if (!state.carousel.length || state.homeIndex === -1) return null;
-  const homePos = state.carousel.indexOf(state.homeIndex);
-  if (homePos === -1) return null;
-  const idx = state.carousel[(homePos + order) % state.carousel.length];
-  return levelData[idx]?.id ?? null;
+// Called once when hero first crosses the HOME edge.
+// Pre-builds the full carousel so all levels are known, then assigns sprites
+// to random carousel positions so traversal stays in sync with the hero.
+function assignAndActivateSecondarySprites(heroEdge) {
+  if (secondaryActivated) return;
+  secondaryActivated = true;
+
+  const spriteDir = heroEdge === "right" ? -1 : 1;
+
+  // Pre-build the full carousel by appending all remaining unused non-home levels.
+  // After this, state.carousel contains every level in random order.
+  // carouselMoveRight/Left will just wrap around from now on (allUsed = true).
+  while (usedNonHomeCount() < nonHomeIndices().length) {
+    state.carousel.push(pickUnusedNonHomeLevelIndex());
+  }
+
+  // Collect all non-HOME carousel positions and shuffle them
+  const nonHomeCarouselPositions = state.carousel
+    .map((lvlIdx, pos) => ({ pos, lvlIdx }))
+    .filter(({ lvlIdx }) => lvlIdx !== state.homeIndex)
+    .map(({ pos }) => pos);
+  for (let i = nonHomeCarouselPositions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [nonHomeCarouselPositions[i], nonHomeCarouselPositions[j]] =
+      [nonHomeCarouselPositions[j], nonHomeCarouselPositions[i]];
+  }
+
+  // Shuffle sprite indices so random sprites are picked when sprites > levels
+  const spriteOrder = secondaryStates.map((_, i) => i);
+  for (let i = spriteOrder.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [spriteOrder[i], spriteOrder[j]] = [spriteOrder[j], spriteOrder[i]];
+  }
+
+  assignedSpriteDir = spriteDir;
+  const count = Math.min(secondaryStates.length, nonHomeCarouselPositions.length);
+
+  for (let rank = 0; rank < count; rank++) {
+    const s = secondaryStates[spriteOrder[rank]];
+    s.assigned = true;   // reserved — activates when hero enters this level
+    s.active = false;
+    s.carouselPos = nonHomeCarouselPositions[rank];
+    s.frameIndex = 0;
+    s.frameTimer = 0;
+    const lvlId = levelData[state.carousel[s.carouselPos]]?.id;
+    const stop = nonHomeCarouselPositions[rank] - state.carousel.indexOf(state.homeIndex);
+    console.log(`[secondary] sprite ${rank + 1} assigned → stop ${stop} (id="${lvlId}") — will walk ${spriteDir === -1 ? "←" : "→"} when hero arrives`);
+  }
+}
+
+// Activates any sprite assigned to the current level the moment the hero enters it.
+function maybeActivateSpritesForCurrentLevel() {
+  if (!secondaryActivated) return;
+  const spawnX = assignedSpriteDir === -1 ? W : 0;
+  for (const s of secondaryStates) {
+    if (s.active || !s.assigned) continue;
+    if (state.carousel[s.carouselPos] !== state.levelIndex) continue;
+    s.active = true;
+    s.x = spawnX;
+    s.direction = assignedSpriteDir;
+    s.facing = assignedSpriteDir;
+    console.log(`[secondary] sprite activated on level "${currentLevel()?.id}"`);
+  }
+}
+
+// Moves all active secondary sprites autonomously every frame.
+// Sprites traverse the carousel circularly, in sync with how the hero moves.
+function updateSecondarySprites(dt) {
+  const n = state.carousel.length;
+  for (let i = 0; i < secondaryStates.length; i++) {
+    const s = secondaryStates[i];
+    if (!s.active || n === 0) continue;
+    const cfg = SECONDARY_SPRITES[i];
+
+    s.x += s.direction * (cfg.speed || 90) * dt;
+
+    s.frameTimer += dt;
+    if (s.frameTimer >= 1 / (cfg.fps || 12)) {
+      s.frameTimer -= 1 / (cfg.fps || 12);
+      s.frameIndex = (s.frameIndex + 1) % (s.frames.length || 1);
+    }
+
+    // Switch levels when sprite is exactly one sprite-width past the edge.
+    // s.x + W / s.x - W preserves the overshoot so the leading edge of the
+    // sprite is right at the entry edge of the new level — seamless in both directions.
+    const sizeRatio = (typeof cfg.sizeRatio === "number" && cfg.sizeRatio > 0) ? cfg.sizeRatio : 1;
+    const spriteW = s.natH > 0
+      ? Math.round(s.natW * Math.round((player.renderH || 56) * sizeRatio) / s.natH)
+      : 80;
+    if (s.direction === 1 && s.x > W + spriteW) {
+      s.carouselPos = (s.carouselPos + 1) % n;
+      s.x = -spriteW; // enter new level from left edge, matching drop-in feel
+    } else if (s.direction === -1 && s.x < -spriteW) {
+      s.carouselPos = (s.carouselPos - 1 + n) % n;
+      s.x = W + spriteW; // enter new level from right edge, matching drop-in feel
+    }
+  }
 }
 
 // ---------- Rendering helpers ----------
@@ -1272,13 +1364,14 @@ function drawSecondary() {
 
   if (lvl.id !== _lastLoggedLevelId) {
     _lastLoggedLevelId = lvl.id;
-    console.log(`[secondary] now on level="${lvl.id}" — states=${secondaryStates.length} configured orders=[${SECONDARY_SPRITES.map(c=>c.levelOrder).join(",")}] resolved=[${SECONDARY_SPRITES.map(c=>levelIdByOrder(c.levelOrder)).join(",")}]`);
+    const active = secondaryStates.filter(s => s.active).map(s => levelData[state.carousel[s.carouselPos]]?.id);
+    console.log(`[secondary] level="${lvl.id}" active sprites on levels: [${active.join(",")}]`);
   }
 
   for (let i = 0; i < secondaryStates.length; i++) {
     const s = secondaryStates[i];
     const cfg = SECONDARY_SPRITES[i];
-    if (levelIdByOrder(cfg.levelOrder) !== lvl.id) continue;
+    if (!s.active || state.carousel[s.carouselPos] !== state.levelIndex) continue;
     if (!s.frames.length) continue;
 
     const img = s.frames[s.frameIndex % s.frames.length];
@@ -1390,7 +1483,8 @@ function finishTransition() {
 
   if (wasHome) {
     state.hasLeftHome = true;
-    state.popupTriggeredThisReturn = false; // reset so next visit can fire
+    state.popupTriggeredThisReturn = false;
+    assignAndActivateSecondarySprites(state.lastEdge);
   }
 
   // Spawn half-in on the correct side:
@@ -1420,27 +1514,7 @@ if (state.lastEdge === "left") {
   if (newLvl) resetLevelLayerStates(newLvl.id);
   state.levelEnteredAt = performance.now();
 
-  resetSecondaryStates(state.lastEdge);
-}
-
-function resetSecondaryStates(lastEdge) {
-  for (let i = 0; i < secondaryStates.length; i++) {
-    const s = secondaryStates[i];
-    const cfg = SECONDARY_SPRITES[i];
-    const rw = Math.round(player.renderW * cfg.sizeRatio);
-    s.frameIndex = 0;
-    s.frameTimer = 0;
-    // Place secondary on the far side from where hero spawns, but clearly on-screen
-    if (lastEdge === "left") {
-      // Hero spawns on right → secondary on left quarter
-      s.x = Math.round(W * 0.25);
-      s.facing = 1;
-    } else {
-      // Hero spawns on left → secondary on right quarter
-      s.x = Math.round(W * 0.7);
-      s.facing = -1;
-    }
-  }
+  maybeActivateSpritesForCurrentLevel();
 }
 
 // =========================
@@ -1850,6 +1924,11 @@ function updateAndDrawHome(dt) {
     state.dropX = null;
     state.visitedLevels.clear();
 
+    // Deactivate all secondary sprites — new random assignment on next departure
+    secondaryActivated = false;
+    assignedSpriteDir = 0;
+    for (const s of secondaryStates) { s.active = false; s.assigned = false; }
+
     // Reset radio fully so it can warm up fresh on next Enter
     RADIO.warmStarted = false;
     RADIO.liveEnabled = false;
@@ -1974,28 +2053,11 @@ if (vx < 0 && player.x <= -off) {
       player.frameIndex = (player.frameIndex + 1) % framesLen;
     }
 
-    // Update secondary characters — move opposite to hero, same speed
-    const lvl = currentLevel();
-    for (let i = 0; i < secondaryStates.length; i++) {
-      const s = secondaryStates[i];
-      const cfg = SECONDARY_SPRITES[i];
-      if (!lvl || levelIdByOrder(cfg.levelOrder) !== lvl.id) continue;
-
-      const srw = Math.round(player.renderW * cfg.sizeRatio);
-      const svx = -vx;
-      if (svx !== 0) {
-        s.facing = svx > 0 ? 1 : -1;
-        s.x += svx * cfg.speed * dt;
-        s.x = clamp(s.x, -srw, W);
-        s.frameTimer += dt;
-        if (s.frameTimer >= 1 / cfg.fps) {
-          s.frameTimer -= 1 / cfg.fps;
-          s.frameIndex = (s.frameIndex + 1) % (s.frames.length || 1);
-        }
-      }
-    }
-  } else if (performance.now() >= state.transitionUntil) {
-    finishTransition();
+    updateSecondarySprites(dt);
+  } else {
+    // Still update sprites during hero transition so they keep moving seamlessly
+    updateSecondarySprites(dt);
+    if (performance.now() >= state.transitionUntil) finishTransition();
   }
 
   // keep widget anchored if visible (and also keeps it ready if you resize)
