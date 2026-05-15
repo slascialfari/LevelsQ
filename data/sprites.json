@@ -1,0 +1,13 @@
+{
+  "secondarySprites": [
+    {
+      "id": 1,
+      "count": 25,
+      "fps": 16,
+      "speed": 90,
+      "levelOrder": 1,
+      "sizeRatio": 0.95,
+      "depthOffset": 11
+    }
+  ]
+}

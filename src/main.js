@@ -26,6 +26,9 @@ const SPRITES = {
   walk: { folder: "assets/sprites/hero_walk", count: 8, fps: 12 },
 };
 
+// Secondary sprite config — loaded from data/sprites.json at boot
+let SECONDARY_SPRITES = [];
+
 // -------- TWEAKABLE VISUAL CONSTANTS --------
 const SPRITE_SCALE = 0.34;
 const FEET_FUDGE_PX = 0;
@@ -496,6 +499,9 @@ let levelData = [];
 let heroIdleFrames = [];
 let heroWalkFrames = [];
 
+// Runtime state for secondary characters (parallel to SECONDARY_SPRITES)
+const secondaryStates = [];
+
 // levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null, l3|null, l4|null }
 const levelAssets = new Map();
 
@@ -915,6 +921,60 @@ async function loadSprites() {
   player.x = clamp(player.x, 0, W - player.renderW);
 }
 
+async function loadSpritesConfig() {
+  const res = await fetch("data/sprites.json");
+  if (!res.ok) throw new Error(`Failed to fetch data/sprites.json (${res.status})`);
+  const json = await res.json();
+  SECONDARY_SPRITES = Array.isArray(json.secondarySprites) ? json.secondarySprites : [];
+  console.log("[sprites.json] loaded", SECONDARY_SPRITES.length, "secondary sprite(s):", SECONDARY_SPRITES.map(c => `id=${c.id} levelId=${c.levelId}`));
+}
+
+function loadSecondaryFrameSet(folder, count) {
+  const frames = [];
+  const promises = [];
+  for (let i = 0; i < count; i++) {
+    const n = String(i).padStart(3, "0");
+    const img = new Image();
+    img.src = `${folder}/sprite_${n}.png`;
+    frames.push(img);
+    promises.push(new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = () => rej(new Error(`Failed to load ${img.src}`));
+    }));
+  }
+  return Promise.all(promises).then(() => frames);
+}
+
+async function loadAllSecondarySprites() {
+  console.log("[secondary] loadAllSecondarySprites — configs to load:", SECONDARY_SPRITES.length);
+  for (const cfg of SECONDARY_SPRITES) {
+    const folder = `assets/sprites/secondary/${cfg.id}`;
+    const frames = await loadSecondaryFrameSet(folder, cfg.count);
+    const f0 = frames[0];
+    const natW = f0 ? (f0.naturalWidth  || f0.width  || 256) : 256;
+    const natH = f0 ? (f0.naturalHeight || f0.height || 256) : 256;
+    secondaryStates.push({
+      frames,
+      natW,
+      natH,
+      x: W * 0.5,
+      facing: -1,
+      frameIndex: 0,
+      frameTimer: 0,
+    });
+    console.log(`[secondary] state pushed — levelOrder=${cfg.levelOrder} frames=${frames.length} natW=${natW} natH=${natH}`);
+  }
+}
+
+// Resolves a carousel position (0=HOME, 1=first right of HOME, …) to a level ID.
+function levelIdByOrder(order) {
+  if (!state.carousel.length || state.homeIndex === -1) return null;
+  const homePos = state.carousel.indexOf(state.homeIndex);
+  if (homePos === -1) return null;
+  const idx = state.carousel[(homePos + order) % state.carousel.length];
+  return levelData[idx]?.id ?? null;
+}
+
 // ---------- Rendering helpers ----------
 function currentLevel() {
   return levelData[state.levelIndex];
@@ -1205,6 +1265,57 @@ function drawPlayer() {
   ctx.restore();
 }
 
+let _lastLoggedLevelId = null;
+function drawSecondary() {
+  const lvl = currentLevel();
+  if (!lvl) return;
+
+  if (lvl.id !== _lastLoggedLevelId) {
+    _lastLoggedLevelId = lvl.id;
+    console.log(`[secondary] now on level="${lvl.id}" — states=${secondaryStates.length} configured orders=[${SECONDARY_SPRITES.map(c=>c.levelOrder).join(",")}] resolved=[${SECONDARY_SPRITES.map(c=>levelIdByOrder(c.levelOrder)).join(",")}]`);
+  }
+
+  for (let i = 0; i < secondaryStates.length; i++) {
+    const s = secondaryStates[i];
+    const cfg = SECONDARY_SPRITES[i];
+    if (levelIdByOrder(cfg.levelOrder) !== lvl.id) continue;
+    if (!s.frames.length) continue;
+
+    const img = s.frames[s.frameIndex % s.frames.length];
+    if (!img || !img.complete) continue;
+
+    // Size: hero height × sizeRatio, preserving sprite aspect ratio
+    const heroH = player.renderH > 0 ? player.renderH : 56;
+    const sizeRatio = (typeof cfg.sizeRatio === "number" && cfg.sizeRatio > 0) ? cfg.sizeRatio : 1;
+    const srcW = s.natW > 0 ? s.natW : 1;
+    const srcH = s.natH > 0 ? s.natH : 1;
+    const drawH = Math.round(heroH * sizeRatio);
+    const drawW = Math.round(srcW * (drawH / srcH));
+    if (!isFinite(drawW) || !isFinite(drawH) || drawW < 1 || drawH < 1) {
+      console.warn("[secondary] skipping draw — bad dimensions", { drawW, drawH, heroH, sizeRatio, srcH, srcW });
+      continue;
+    }
+    const x = Math.round(s.x);
+    // depthOffset: 0 = same floor as hero. Positive = further behind (feet move UP on screen).
+    const depthOffset = typeof cfg.depthOffset === "number" ? cfg.depthOffset : 0;
+    const y = Math.round(FLOOR_Y - depthOffset - drawH - FEET_FUDGE_PX);
+
+    ctx.save();
+    try {
+      if (s.facing === -1) {
+        ctx.translate(x + drawW, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, 0, y, drawW, drawH);
+      } else {
+        ctx.drawImage(img, x, y, drawW, drawH);
+      }
+    } catch (e) {
+      console.warn("[secondary] drawImage failed:", e.message, { x, y, drawW, drawH });
+    }
+    ctx.restore();
+  }
+}
+
 // ---------- Universe switching ----------
 // NEW BEHAVIOR:
 // - Trigger when hero CENTER crosses the portal line (x=0 or x=W),
@@ -1308,6 +1419,28 @@ if (state.lastEdge === "left") {
   const newLvl = levelData[state.levelIndex];
   if (newLvl) resetLevelLayerStates(newLvl.id);
   state.levelEnteredAt = performance.now();
+
+  resetSecondaryStates(state.lastEdge);
+}
+
+function resetSecondaryStates(lastEdge) {
+  for (let i = 0; i < secondaryStates.length; i++) {
+    const s = secondaryStates[i];
+    const cfg = SECONDARY_SPRITES[i];
+    const rw = Math.round(player.renderW * cfg.sizeRatio);
+    s.frameIndex = 0;
+    s.frameTimer = 0;
+    // Place secondary on the far side from where hero spawns, but clearly on-screen
+    if (lastEdge === "left") {
+      // Hero spawns on right → secondary on left quarter
+      s.x = Math.round(W * 0.25);
+      s.facing = 1;
+    } else {
+      // Hero spawns on left → secondary on right quarter
+      s.x = Math.round(W * 0.7);
+      s.facing = -1;
+    }
+  }
 }
 
 // =========================
@@ -1840,6 +1973,27 @@ if (vx < 0 && player.x <= -off) {
       const framesLen = currentFrames().length || 1;
       player.frameIndex = (player.frameIndex + 1) % framesLen;
     }
+
+    // Update secondary characters — move opposite to hero, same speed
+    const lvl = currentLevel();
+    for (let i = 0; i < secondaryStates.length; i++) {
+      const s = secondaryStates[i];
+      const cfg = SECONDARY_SPRITES[i];
+      if (!lvl || levelIdByOrder(cfg.levelOrder) !== lvl.id) continue;
+
+      const srw = Math.round(player.renderW * cfg.sizeRatio);
+      const svx = -vx;
+      if (svx !== 0) {
+        s.facing = svx > 0 ? 1 : -1;
+        s.x += svx * cfg.speed * dt;
+        s.x = clamp(s.x, -srw, W);
+        s.frameTimer += dt;
+        if (s.frameTimer >= 1 / cfg.fps) {
+          s.frameTimer -= 1 / cfg.fps;
+          s.frameIndex = (s.frameIndex + 1) % (s.frames.length || 1);
+        }
+      }
+    }
   } else if (performance.now() >= state.transitionUntil) {
     finishTransition();
   }
@@ -1865,9 +2019,10 @@ if (vx < 0 && player.x <= -off) {
     drawForeground();
   } else {
     // Gameplay levels use new overlay/underlay system
-    // Order (back → front): background → underlays → hero → overlays
+    // Order (back → front): background → underlays → secondary → hero → overlays
     drawBackground();
     drawUnderlays(dt);
+    drawSecondary();
     drawPlayer();
     drawOverlays(dt);
   }
@@ -1907,11 +2062,14 @@ function applyDebugParams() {
 }
 
 // ---------- Boot ----------
-Promise.all([
-  loadLevels(),
-  loadSprites(),
-  RADIO.loadStations(), // load radio.json early
-])
+// sprites.json must load before loadAllSecondarySprites so SECONDARY_SPRITES is populated
+loadSpritesConfig()
+  .then(() => Promise.all([
+    loadLevels(),
+    loadSprites(),
+    loadAllSecondarySprites(),
+    RADIO.loadStations(),
+  ]))
   .then(() => { applyDebugParams(); requestAnimationFrame(loop); })
   .catch((e) => {
     console.error(e);
