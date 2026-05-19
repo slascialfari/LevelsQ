@@ -952,19 +952,24 @@ async function loadAllSecondarySprites() {
   for (const cfg of SECONDARY_SPRITES) {
     const folder = `assets/sprites/secondary/${cfg.id}`;
     const frames = await loadSecondaryFrameSet(folder, cfg.count);
-    const f0 = frames[0];
-    const natW = f0 ? (f0.naturalWidth  || f0.width  || 256) : 256;
-    const natH = f0 ? (f0.naturalHeight || f0.height || 256) : 256;
+    // Store per-frame dimensions — needed when sprite sheets have varying frame sizes
+    const frameDims = frames.map(f => ({
+      w: f.naturalWidth  || f.width  || 256,
+      h: f.naturalHeight || f.height || 256,
+    }));
+    const natW = frameDims[0]?.w ?? 256;
+    const natH = frameDims[0]?.h ?? 256;
     secondaryStates.push({
       frames,
-      natW,
+      frameDims,
+      natW,  // frame-0 dims, used for edge-detection threshold
       natH,
       x: W * 0.5,
       facing: -1,
       frameIndex: 0,
       frameTimer: 0,
     });
-    console.log(`[secondary] state pushed — levelOrder=${cfg.levelOrder} frames=${frames.length} natW=${natW} natH=${natH}`);
+    console.log(`[secondary] state pushed — frames=${frames.length} dims vary: ${[...new Set(frameDims.map(d=>`${d.w}x${d.h}`))].join(", ")}`);
   }
 }
 
@@ -1380,8 +1385,10 @@ function drawSecondary() {
     // Size: hero height × sizeRatio, preserving sprite aspect ratio
     const heroH = player.renderH > 0 ? player.renderH : 56;
     const sizeRatio = (typeof cfg.sizeRatio === "number" && cfg.sizeRatio > 0) ? cfg.sizeRatio : 1;
-    const srcW = s.natW > 0 ? s.natW : 1;
-    const srcH = s.natH > 0 ? s.natH : 1;
+    // Use this frame's own dimensions so varying-size sprite sheets render correctly
+    const fd = s.frameDims?.[s.frameIndex % (s.frameDims?.length || 1)];
+    const srcW = (fd?.w || s.natW || 1);
+    const srcH = (fd?.h || s.natH || 1);
     const drawH = Math.round(heroH * sizeRatio);
     const drawW = Math.round(srcW * (drawH / srcH));
     if (!isFinite(drawW) || !isFinite(drawH) || drawW < 1 || drawH < 1) {
@@ -2074,6 +2081,7 @@ if (vx < 0 && player.x <= -off) {
     drawLayer1(dt);
     drawBackground();
     if (!fullLoop) drawCommandsOverlayUnderHero(dt);
+    drawSecondary();
     drawPlayer();
     drawLayer2(dt);
     if (!fullLoop) drawLayer3(dt);
