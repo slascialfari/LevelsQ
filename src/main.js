@@ -2105,8 +2105,11 @@ if (vx < 0 && player.x <= -off) {
   requestAnimationFrame(loop);
 }
 
-// ---------- Debug: ?debug=true&lvl=5 → jump to level 005 ----------
-// Also: ?debug=true&homeOnly=true → carousel stays on HOME only
+// ---------- Debug params ----------
+// ?debug=true&level=3        → jump to level 003  (zero-padded id, or exact id like HOME)
+// ?debug=true&level=3&sprite=2 → jump to level 003 and place sprite id=2 there walking
+// ?debug=true&homeOnly=true  → lock carousel to HOME only
+// Legacy: ?debug=true&lvl=3  → same as level=3
 function applyDebugParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get("debug") !== "true") return;
@@ -2120,15 +2123,53 @@ function applyDebugParams() {
     return;
   }
 
-  const lvl = params.get("lvl");
-  if (!lvl) return;
-  const targetId = String(lvl).padStart(3, "0");
-  const idx = levelData.findIndex((l) => l.id === targetId);
-  if (idx === -1) { console.warn(`[debug] level "${targetId}" not found`); return; }
-  state.levelIndex = idx;
-  state.carousel = [idx];
-  state.carouselPos = 0;
-  console.log(`[debug] jumping to level ${targetId}`);
+  // Resolve level param (supports "level" or legacy "lvl")
+  const rawLevel = params.get("level") ?? params.get("lvl");
+  if (rawLevel) {
+    // Accept "HOME" verbatim, otherwise zero-pad number (3 → "003")
+    const targetId = isNaN(Number(rawLevel))
+      ? rawLevel.toUpperCase()
+      : String(rawLevel).padStart(3, "0");
+    const idx = levelData.findIndex((l) => l.id === targetId);
+    if (idx === -1) {
+      console.warn(`[debug] level "${targetId}" not found`);
+    } else {
+      // Pre-build full carousel so sprite traversal works
+      while (usedNonHomeCount() < nonHomeIndices().length) {
+        state.carousel.push(pickUnusedNonHomeLevelIndex());
+      }
+      state.levelIndex = idx;
+      state.carouselPos = state.carousel.indexOf(idx);
+      if (state.carouselPos === -1) {
+        state.carousel.push(idx);
+        state.carouselPos = state.carousel.length - 1;
+      }
+      console.log(`[debug] jumped to level "${targetId}" (carouselPos=${state.carouselPos})`);
+    }
+  }
+
+  // Resolve sprite param — activates a single sprite on the current level
+  const rawSprite = params.get("sprite");
+  if (rawSprite) {
+    const spriteId = parseInt(rawSprite, 10);
+    const cfgIdx = SECONDARY_SPRITES.findIndex(c => c.id === spriteId);
+    if (cfgIdx === -1) {
+      console.warn(`[debug] sprite id=${spriteId} not found in sprites.json`);
+    } else {
+      secondaryActivated = true;
+      assignedSpriteDir = -1; // walk left by default
+      const s = secondaryStates[cfgIdx];
+      s.assigned = true;
+      s.active = true;
+      s.carouselPos = state.carouselPos;
+      s.x = W * 0.65;
+      s.direction = -1;
+      s.facing = -1;
+      s.frameIndex = 0;
+      s.frameTimer = 0;
+      console.log(`[debug] sprite id=${spriteId} activated on level "${currentLevel()?.id}"`);
+    }
+  }
 }
 
 // ---------- Boot ----------
