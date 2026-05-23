@@ -26,6 +26,9 @@ const SPRITES = {
   walk: { folder: "assets/sprites/hero_walk", count: 8, fps: 12 },
 };
 
+// Secondary sprite config — loaded from data/sprites.json at boot
+let SECONDARY_SPRITES = [];
+
 // -------- TWEAKABLE VISUAL CONSTANTS --------
 const SPRITE_SCALE = 0.34;
 const FEET_FUDGE_PX = 0;
@@ -496,6 +499,11 @@ let levelData = [];
 let heroIdleFrames = [];
 let heroWalkFrames = [];
 
+// Runtime state for secondary characters (parallel to SECONDARY_SPRITES)
+const secondaryStates = [];
+let secondaryActivated = false; // set to true once sprites are assigned (on first HOME departure)
+let assignedSpriteDir = 0;     // direction sprites walk (-1 left / 1 right), set at assignment
+
 // levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null, l3|null, l4|null }
 const levelAssets = new Map();
 
@@ -915,6 +923,155 @@ async function loadSprites() {
   player.x = clamp(player.x, 0, W - player.renderW);
 }
 
+async function loadSpritesConfig() {
+  const res = await fetch("data/sprites.json");
+  if (!res.ok) throw new Error(`Failed to fetch data/sprites.json (${res.status})`);
+  const json = await res.json();
+  SECONDARY_SPRITES = Array.isArray(json.secondarySprites) ? json.secondarySprites : [];
+  console.log("[sprites.json] loaded", SECONDARY_SPRITES.length, "secondary sprite(s):", SECONDARY_SPRITES.map(c => `id=${c.id} levelId=${c.levelId}`));
+}
+
+function loadSecondaryFrameSet(folder, count) {
+  const frames = [];
+  const promises = [];
+  for (let i = 0; i < count; i++) {
+    const n = String(i).padStart(3, "0");
+    const img = new Image();
+    img.src = `${folder}/sprite_${n}.png`;
+    frames.push(img);
+    promises.push(new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = () => rej(new Error(`Failed to load ${img.src}`));
+    }));
+  }
+  return Promise.all(promises).then(() => frames);
+}
+
+async function loadAllSecondarySprites() {
+  console.log("[secondary] loadAllSecondarySprites — configs to load:", SECONDARY_SPRITES.length);
+  for (const cfg of SECONDARY_SPRITES) {
+    const folder = `assets/sprites/secondary/${cfg.id}`;
+    const frames = await loadSecondaryFrameSet(folder, cfg.count);
+    // Store per-frame dimensions — needed when sprite sheets have varying frame sizes
+    const frameDims = frames.map(f => ({
+      w: f.naturalWidth  || f.width  || 256,
+      h: f.naturalHeight || f.height || 256,
+    }));
+    const natW = frameDims[0]?.w ?? 256;
+    const natH = frameDims[0]?.h ?? 256;
+    secondaryStates.push({
+      frames,
+      frameDims,
+      natW,  // frame-0 dims, used for edge-detection threshold
+      natH,
+      x: W * 0.5,
+      facing: -1,
+      frameIndex: 0,
+      frameTimer: 0,
+    });
+    console.log(`[secondary] state pushed — frames=${frames.length} dims vary: ${[...new Set(frameDims.map(d=>`${d.w}x${d.h}`))].join(", ")}`);
+  }
+}
+
+// Called once when hero first crosses the HOME edge.
+// Pre-builds the full carousel so all levels are known, then assigns sprites
+// to random carousel positions so traversal stays in sync with the hero.
+function assignAndActivateSecondarySprites(heroEdge) {
+  if (secondaryActivated) return;
+  secondaryActivated = true;
+
+  const spriteDir = heroEdge === "right" ? -1 : 1;
+
+  // Pre-build the full carousel by appending all remaining unused non-home levels.
+  // After this, state.carousel contains every level in random order.
+  // carouselMoveRight/Left will just wrap around from now on (allUsed = true).
+  while (usedNonHomeCount() < nonHomeIndices().length) {
+    state.carousel.push(pickUnusedNonHomeLevelIndex());
+  }
+
+  // Collect all non-HOME carousel positions and shuffle them
+  const nonHomeCarouselPositions = state.carousel
+    .map((lvlIdx, pos) => ({ pos, lvlIdx }))
+    .filter(({ lvlIdx }) => lvlIdx !== state.homeIndex)
+    .map(({ pos }) => pos);
+  for (let i = nonHomeCarouselPositions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [nonHomeCarouselPositions[i], nonHomeCarouselPositions[j]] =
+      [nonHomeCarouselPositions[j], nonHomeCarouselPositions[i]];
+  }
+
+  // Shuffle sprite indices so random sprites are picked when sprites > levels
+  const spriteOrder = secondaryStates.map((_, i) => i);
+  for (let i = spriteOrder.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [spriteOrder[i], spriteOrder[j]] = [spriteOrder[j], spriteOrder[i]];
+  }
+
+  assignedSpriteDir = spriteDir;
+  const count = Math.min(secondaryStates.length, nonHomeCarouselPositions.length);
+
+  for (let rank = 0; rank < count; rank++) {
+    const s = secondaryStates[spriteOrder[rank]];
+    s.assigned = true;   // reserved — activates when hero enters this level
+    s.active = false;
+    s.carouselPos = nonHomeCarouselPositions[rank];
+    s.frameIndex = 0;
+    s.frameTimer = 0;
+    const lvlId = levelData[state.carousel[s.carouselPos]]?.id;
+    const stop = nonHomeCarouselPositions[rank] - state.carousel.indexOf(state.homeIndex);
+    console.log(`[secondary] sprite ${rank + 1} assigned → stop ${stop} (id="${lvlId}") — will walk ${spriteDir === -1 ? "←" : "→"} when hero arrives`);
+  }
+}
+
+// Activates any sprite assigned to the current level the moment the hero enters it.
+function maybeActivateSpritesForCurrentLevel() {
+  if (!secondaryActivated) return;
+  const spawnX = assignedSpriteDir === -1 ? W : 0;
+  for (const s of secondaryStates) {
+    if (s.active || !s.assigned) continue;
+    if (state.carousel[s.carouselPos] !== state.levelIndex) continue;
+    s.active = true;
+    s.x = spawnX;
+    s.direction = assignedSpriteDir;
+    s.facing = assignedSpriteDir;
+    console.log(`[secondary] sprite activated on level "${currentLevel()?.id}"`);
+  }
+}
+
+// Moves all active secondary sprites autonomously every frame.
+// Sprites traverse the carousel circularly, in sync with how the hero moves.
+function updateSecondarySprites(dt) {
+  const n = state.carousel.length;
+  for (let i = 0; i < secondaryStates.length; i++) {
+    const s = secondaryStates[i];
+    if (!s.active || n === 0) continue;
+    const cfg = SECONDARY_SPRITES[i];
+
+    s.x += s.direction * (cfg.speed || 90) * dt;
+
+    s.frameTimer += dt;
+    if (s.frameTimer >= 1 / (cfg.fps || 12)) {
+      s.frameTimer -= 1 / (cfg.fps || 12);
+      s.frameIndex = (s.frameIndex + 1) % (s.frames.length || 1);
+    }
+
+    // Switch levels when sprite is exactly one sprite-width past the edge.
+    // s.x + W / s.x - W preserves the overshoot so the leading edge of the
+    // sprite is right at the entry edge of the new level — seamless in both directions.
+    const sizeRatio = (typeof cfg.sizeRatio === "number" && cfg.sizeRatio > 0) ? cfg.sizeRatio : 1;
+    const spriteW = s.natH > 0
+      ? Math.round(s.natW * Math.round((player.renderH || 56) * sizeRatio) / s.natH)
+      : 80;
+    if (s.direction === 1 && s.x > W + spriteW) {
+      s.carouselPos = (s.carouselPos + 1) % n;
+      s.x = -spriteW; // enter new level from left edge, matching drop-in feel
+    } else if (s.direction === -1 && s.x < -spriteW) {
+      s.carouselPos = (s.carouselPos - 1 + n) % n;
+      s.x = W + spriteW; // enter new level from right edge, matching drop-in feel
+    }
+  }
+}
+
 // ---------- Rendering helpers ----------
 function currentLevel() {
   return levelData[state.levelIndex];
@@ -1205,6 +1362,60 @@ function drawPlayer() {
   ctx.restore();
 }
 
+let _lastLoggedLevelId = null;
+function drawSecondary() {
+  const lvl = currentLevel();
+  if (!lvl) return;
+
+  if (lvl.id !== _lastLoggedLevelId) {
+    _lastLoggedLevelId = lvl.id;
+    const active = secondaryStates.filter(s => s.active).map(s => levelData[state.carousel[s.carouselPos]]?.id);
+    console.log(`[secondary] level="${lvl.id}" active sprites on levels: [${active.join(",")}]`);
+  }
+
+  for (let i = 0; i < secondaryStates.length; i++) {
+    const s = secondaryStates[i];
+    const cfg = SECONDARY_SPRITES[i];
+    if (!s.active || state.carousel[s.carouselPos] !== state.levelIndex) continue;
+    if (!s.frames.length) continue;
+
+    const img = s.frames[s.frameIndex % s.frames.length];
+    if (!img || !img.complete) continue;
+
+    // Size: hero height × sizeRatio, preserving sprite aspect ratio
+    const heroH = player.renderH > 0 ? player.renderH : 56;
+    const sizeRatio = (typeof cfg.sizeRatio === "number" && cfg.sizeRatio > 0) ? cfg.sizeRatio : 1;
+    // Use this frame's own dimensions so varying-size sprite sheets render correctly
+    const fd = s.frameDims?.[s.frameIndex % (s.frameDims?.length || 1)];
+    const srcW = (fd?.w || s.natW || 1);
+    const srcH = (fd?.h || s.natH || 1);
+    const drawH = Math.round(heroH * sizeRatio);
+    const drawW = Math.round(srcW * (drawH / srcH));
+    if (!isFinite(drawW) || !isFinite(drawH) || drawW < 1 || drawH < 1) {
+      console.warn("[secondary] skipping draw — bad dimensions", { drawW, drawH, heroH, sizeRatio, srcH, srcW });
+      continue;
+    }
+    const x = Math.round(s.x);
+    // depthOffset: 0 = same floor as hero. Positive = further behind (feet move UP on screen).
+    const depthOffset = typeof cfg.depthOffset === "number" ? cfg.depthOffset : 0;
+    const y = Math.round(FLOOR_Y - depthOffset - drawH - FEET_FUDGE_PX);
+
+    ctx.save();
+    try {
+      if (s.facing === -1) {
+        ctx.translate(x + drawW, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, 0, y, drawW, drawH);
+      } else {
+        ctx.drawImage(img, x, y, drawW, drawH);
+      }
+    } catch (e) {
+      console.warn("[secondary] drawImage failed:", e.message, { x, y, drawW, drawH });
+    }
+    ctx.restore();
+  }
+}
+
 // ---------- Universe switching ----------
 // NEW BEHAVIOR:
 // - Trigger when hero CENTER crosses the portal line (x=0 or x=W),
@@ -1279,7 +1490,8 @@ function finishTransition() {
 
   if (wasHome) {
     state.hasLeftHome = true;
-    state.popupTriggeredThisReturn = false; // reset so next visit can fire
+    state.popupTriggeredThisReturn = false;
+    assignAndActivateSecondarySprites(state.lastEdge);
   }
 
   // Spawn half-in on the correct side:
@@ -1308,6 +1520,8 @@ if (state.lastEdge === "left") {
   const newLvl = levelData[state.levelIndex];
   if (newLvl) resetLevelLayerStates(newLvl.id);
   state.levelEnteredAt = performance.now();
+
+  maybeActivateSpritesForCurrentLevel();
 }
 
 // =========================
@@ -1717,6 +1931,11 @@ function updateAndDrawHome(dt) {
     state.dropX = null;
     state.visitedLevels.clear();
 
+    // Deactivate all secondary sprites — new random assignment on next departure
+    secondaryActivated = false;
+    assignedSpriteDir = 0;
+    for (const s of secondaryStates) { s.active = false; s.assigned = false; }
+
     // Reset radio fully so it can warm up fresh on next Enter
     RADIO.warmStarted = false;
     RADIO.liveEnabled = false;
@@ -1840,8 +2059,12 @@ if (vx < 0 && player.x <= -off) {
       const framesLen = currentFrames().length || 1;
       player.frameIndex = (player.frameIndex + 1) % framesLen;
     }
-  } else if (performance.now() >= state.transitionUntil) {
-    finishTransition();
+
+    updateSecondarySprites(dt);
+  } else {
+    // Still update sprites during hero transition so they keep moving seamlessly
+    updateSecondarySprites(dt);
+    if (performance.now() >= state.transitionUntil) finishTransition();
   }
 
   // keep widget anchored if visible (and also keeps it ready if you resize)
@@ -1858,6 +2081,7 @@ if (vx < 0 && player.x <= -off) {
     drawLayer1(dt);
     drawBackground();
     if (!fullLoop) drawCommandsOverlayUnderHero(dt);
+    drawSecondary();
     drawPlayer();
     drawLayer2(dt);
     if (!fullLoop) drawLayer3(dt);
@@ -1865,9 +2089,10 @@ if (vx < 0 && player.x <= -off) {
     drawForeground();
   } else {
     // Gameplay levels use new overlay/underlay system
-    // Order (back → front): background → underlays → hero → overlays
+    // Order (back → front): background → underlays → secondary → hero → overlays
     drawBackground();
     drawUnderlays(dt);
+    drawSecondary();
     drawPlayer();
     drawOverlays(dt);
   }
@@ -1880,8 +2105,11 @@ if (vx < 0 && player.x <= -off) {
   requestAnimationFrame(loop);
 }
 
-// ---------- Debug: ?debug=true&lvl=5 → jump to level 005 ----------
-// Also: ?debug=true&homeOnly=true → carousel stays on HOME only
+// ---------- Debug params ----------
+// ?debug=true&level=3        → jump to level 003  (zero-padded id, or exact id like HOME)
+// ?debug=true&level=3&sprite=2 → jump to level 003 and place sprite id=2 there walking
+// ?debug=true&homeOnly=true  → lock carousel to HOME only
+// Legacy: ?debug=true&lvl=3  → same as level=3
 function applyDebugParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get("debug") !== "true") return;
@@ -1895,23 +2123,64 @@ function applyDebugParams() {
     return;
   }
 
-  const lvl = params.get("lvl");
-  if (!lvl) return;
-  const targetId = String(lvl).padStart(3, "0");
-  const idx = levelData.findIndex((l) => l.id === targetId);
-  if (idx === -1) { console.warn(`[debug] level "${targetId}" not found`); return; }
-  state.levelIndex = idx;
-  state.carousel = [idx];
-  state.carouselPos = 0;
-  console.log(`[debug] jumping to level ${targetId}`);
+  // Resolve level param (supports "level" or legacy "lvl")
+  const rawLevel = params.get("level") ?? params.get("lvl");
+  if (rawLevel) {
+    // Accept "HOME" verbatim, otherwise zero-pad number (3 → "003")
+    const targetId = isNaN(Number(rawLevel))
+      ? rawLevel.toUpperCase()
+      : String(rawLevel).padStart(3, "0");
+    const idx = levelData.findIndex((l) => l.id === targetId);
+    if (idx === -1) {
+      console.warn(`[debug] level "${targetId}" not found`);
+    } else {
+      // Pre-build full carousel so sprite traversal works
+      while (usedNonHomeCount() < nonHomeIndices().length) {
+        state.carousel.push(pickUnusedNonHomeLevelIndex());
+      }
+      state.levelIndex = idx;
+      state.carouselPos = state.carousel.indexOf(idx);
+      if (state.carouselPos === -1) {
+        state.carousel.push(idx);
+        state.carouselPos = state.carousel.length - 1;
+      }
+      console.log(`[debug] jumped to level "${targetId}" (carouselPos=${state.carouselPos})`);
+    }
+  }
+
+  // Resolve sprite param — activates a single sprite on the current level
+  const rawSprite = params.get("sprite");
+  if (rawSprite) {
+    const spriteId = parseInt(rawSprite, 10);
+    const cfgIdx = SECONDARY_SPRITES.findIndex(c => c.id === spriteId);
+    if (cfgIdx === -1) {
+      console.warn(`[debug] sprite id=${spriteId} not found in sprites.json`);
+    } else {
+      secondaryActivated = true;
+      assignedSpriteDir = -1; // walk left by default
+      const s = secondaryStates[cfgIdx];
+      s.assigned = true;
+      s.active = true;
+      s.carouselPos = state.carouselPos;
+      s.x = W * 0.65;
+      s.direction = -1;
+      s.facing = -1;
+      s.frameIndex = 0;
+      s.frameTimer = 0;
+      console.log(`[debug] sprite id=${spriteId} activated on level "${currentLevel()?.id}"`);
+    }
+  }
 }
 
 // ---------- Boot ----------
-Promise.all([
-  loadLevels(),
-  loadSprites(),
-  RADIO.loadStations(), // load radio.json early
-])
+// sprites.json must load before loadAllSecondarySprites so SECONDARY_SPRITES is populated
+loadSpritesConfig()
+  .then(() => Promise.all([
+    loadLevels(),
+    loadSprites(),
+    loadAllSecondarySprites(),
+    RADIO.loadStations(),
+  ]))
   .then(() => { applyDebugParams(); requestAnimationFrame(loop); })
   .catch((e) => {
     console.error(e);

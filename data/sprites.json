@@ -1,0 +1,52 @@
+{
+  "secondarySprites": [
+    {
+      "id": 1,
+      "count": 25,
+      "fps": 16,
+      "speed": 90,
+      "sizeRatio": 0.95,
+      "depthOffset": 11
+    },
+    {
+      "id": 2,
+      "count": 16,
+      "fps": 12,
+      "speed": 70,
+      "sizeRatio": 1.0,
+      "depthOffset": 11
+    },
+    {
+      "id": 3,
+      "count": 25,
+      "fps": 17,
+      "speed": 90,
+      "sizeRatio": 0.95,
+      "depthOffset": 11
+    },
+    {
+      "id": 4,
+      "count": 48,
+      "fps": 18,
+      "speed": 50,
+      "sizeRatio": 1.0,
+      "depthOffset": 11
+    },
+    {
+      "id": 5,
+      "count": 48,
+      "fps": 16,
+      "speed": 40,
+      "sizeRatio": 1.0,
+      "depthOffset": 11
+    },
+    {
+      "id": 6,
+      "count": 16,
+      "fps": 12,
+      "speed": 90,
+      "sizeRatio": 0.9,
+      "depthOffset": 12
+    }
+  ]
+}
