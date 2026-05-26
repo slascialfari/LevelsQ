@@ -20,7 +20,7 @@
       "id": 3,
       "count": 25,
       "fps": 17,
-      "speed": 90,
+      "speed": 80,
       "sizeRatio": 0.95,
       "depthOffset": 11
     },
@@ -47,6 +47,30 @@
       "speed": 90,
       "sizeRatio": 0.9,
       "depthOffset": 12
+    },
+    {
+      "id": 7,
+      "count": 25,
+      "fps": 12,
+      "speed": 60,
+      "sizeRatio": 1.0,
+      "depthOffset": 11
+    },
+    {
+      "id": 8,
+      "count": 49,
+      "fps": 24,
+      "speed": 50,
+      "sizeRatio": 0.89,
+      "depthOffset": 11
+    },
+        {
+      "id": 9,
+      "count": 25,
+      "fps": 18,
+      "speed": 45,
+      "sizeRatio": 1.0,
+      "depthOffset": 11
     }
   ]
 }
