@@ -502,7 +502,7 @@ let heroWalkFrames = [];
 // Runtime state for secondary characters (parallel to SECONDARY_SPRITES)
 const secondaryStates = [];
 let secondaryActivated = false; // set to true once sprites are assigned (on first HOME departure)
-let assignedSpriteDir = 0;     // direction sprites walk (-1 left / 1 right), set at assignment
+let heroDirection = 0;         // 1 = hero went right, -1 = hero went left (set when hero leaves HOME)
 
 // levelAssets.get(level.id) => { bgImg, fgImg|null, l1|null, l2|null, l3|null, l4|null }
 const levelAssets = new Map();
@@ -973,73 +973,200 @@ async function loadAllSecondarySprites() {
   }
 }
 
+// =============================================================
+// SECONDARY SPRITE PLACEMENT HELPERS
+// =============================================================
+
+// Valid drop quadrant indices (0=A … 5=F) for hero entering from the LEFT (going right).
+// Mirrored automatically when hero enters from the right.
+const SPRITE_QUADRANT_RULES = {
+  opposite_slow:    [2, 3, 4, 5],    // C–F  (slow oncoming — give it room)
+  opposite_similar: [3, 4, 5],       // D–F  (similar speed — needs more runway)
+  opposite_fast:    [3, 4, 5],       // D–F  (fast oncoming — same)
+  same_slow:        [0, 1, 2, 3],    // A–D  (hero catches up)
+  same_similar:     [2, 3, 4, 5],    // C–F  (avoid A/B — parallel-walk risk)
+  same_fast:        [0, 1, 2, 3, 4], // A–E  (escapes ahead; F exits immediately)
+};
+
+function spriteSpeedTier(speed) {
+  const ratio = speed / (player.speed || 90);
+  if (ratio < 0.7) return "slow";
+  if (ratio <= 1.3) return "similar";
+  return "fast";
+}
+
+function quadrantCenterX(q) {
+  return Math.round((q + 0.5) * W / 6);
+}
+
+function validQuadrantsFor(spriteDir, tier, heroDir) {
+  const rel = spriteDir === heroDir ? "same" : "opposite";
+  let qs = [...(SPRITE_QUADRANT_RULES[`${rel}_${tier}`] ?? [2, 3, 4, 5])];
+  if (heroDir === -1) qs = qs.map(q => 5 - q); // mirror for hero entering from right
+  return qs;
+}
+
+function minQuadGap(dir1, tier1, dir2, tier2) {
+  // Same direction + both similar speed → biggest overlap risk
+  return (dir1 === dir2 && tier1 === "similar" && tier2 === "similar") ? 2 : 1;
+}
+
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Pass 1: 1 sprite per level. Pass 2: up to 2 per level (even). Pass 3: up to 4 per level (random).
+function distributeSpriteAssignments(nonHomePositions) {
+  const N = secondaryStates.length;
+  const spriteOrder = shuffleArray(Array.from({ length: N }, (_, i) => i));
+  const levelOrder  = shuffleArray([...nonHomePositions]);
+  const counts = {};
+  nonHomePositions.forEach(p => { counts[p] = 0; });
+  const result = [];
+  let si = 0;
+
+  for (const pos of levelOrder) {           // pass 1
+    if (si >= N) break;
+    result.push({ spriteIdx: spriteOrder[si++], carouselPos: pos });
+    counts[pos]++;
+  }
+  for (const pos of levelOrder) {           // pass 2 (cap 2)
+    if (si >= N) break;
+    if (counts[pos] < 2) {
+      result.push({ spriteIdx: spriteOrder[si++], carouselPos: pos });
+      counts[pos]++;
+    }
+  }
+  while (si < N) {                          // pass 3 (cap 4)
+    const avail = nonHomePositions.filter(p => counts[p] < 4);
+    if (!avail.length) break;
+    const pos = avail[Math.floor(Math.random() * avail.length)];
+    result.push({ spriteIdx: spriteOrder[si++], carouselPos: pos });
+    counts[pos]++;
+  }
+  return result;
+}
+
+// Direction is determined by which half of the screen the quadrant is on:
+//   near hero's entry side (first 3 quadrants) → same direction as hero
+//   far from hero's entry side (last 3 quadrants) → opposite direction
+function directionForQuadrant(q, heroDir) {
+  const nearHero = heroDir === 1 ? q < 3 : q >= 3;
+  return nearHero ? heroDir : -heroDir;
+}
+
+// For K > 1 sprites on a level: pick quadrant for each (direction follows from quadrant).
+// Drops sprites with no valid slot — option B (no relaxation of rules).
+function resolveQuadrantsForLevel(sprites, heroDir) {
+  const placed = [];
+  const resolved = [];
+  for (const sp of sprites) {
+    const cfg  = SECONDARY_SPRITES[sp.spriteIdx];
+    const tier = spriteSpeedTier(cfg.speed ?? 90);
+
+    // Build candidate list: each quadrant has a fixed direction, check it passes validity rules
+    let candidates = [];
+    for (let q = 0; q < 6; q++) {
+      const dir = directionForQuadrant(q, heroDir);
+      if (validQuadrantsFor(dir, tier, heroDir).includes(q)) candidates.push({ q, dir });
+    }
+
+    // Apply separation from already-placed sprites
+    candidates = candidates.filter(({ q, dir }) =>
+      placed.every(p => Math.abs(q - p.q) >= minQuadGap(dir, tier, p.dir, p.tier))
+    );
+
+    if (!candidates.length) continue; // no valid slot — drop this sprite
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    placed.push({ q: pick.q, dir: pick.dir, tier });
+    resolved.push({ ...sp, direction: pick.dir, spawnX: quadrantCenterX(pick.q) });
+  }
+  return resolved;
+}
+
+// =============================================================
+
 // Called once when hero first crosses the HOME edge.
-// Pre-builds the full carousel so all levels are known, then assigns sprites
-// to random carousel positions so traversal stays in sync with the hero.
 function assignAndActivateSecondarySprites(heroEdge) {
   if (secondaryActivated) return;
   secondaryActivated = true;
 
-  const spriteDir = heroEdge === "right" ? -1 : 1;
+  const heroDir = heroEdge === "right" ? 1 : -1;
+  heroDirection = heroDir;
 
-  // Pre-build the full carousel by appending all remaining unused non-home levels.
-  // After this, state.carousel contains every level in random order.
-  // carouselMoveRight/Left will just wrap around from now on (allUsed = true).
+  // Pre-build full carousel so all levels are known before assigning
   while (usedNonHomeCount() < nonHomeIndices().length) {
     state.carousel.push(pickUnusedNonHomeLevelIndex());
   }
 
-  // Collect all non-HOME carousel positions and shuffle them
-  const nonHomeCarouselPositions = state.carousel
-    .map((lvlIdx, pos) => ({ pos, lvlIdx }))
-    .filter(({ lvlIdx }) => lvlIdx !== state.homeIndex)
-    .map(({ pos }) => pos);
-  for (let i = nonHomeCarouselPositions.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [nonHomeCarouselPositions[i], nonHomeCarouselPositions[j]] =
-      [nonHomeCarouselPositions[j], nonHomeCarouselPositions[i]];
+  const homePos = state.carousel.indexOf(state.homeIndex);
+  const nonHomePositions = state.carousel.map((_, i) => i).filter(i => i !== homePos);
+
+  const assignments = distributeSpriteAssignments(nonHomePositions);
+
+  // Group by level, resolve directions + quadrants, write into states
+  const byLevel = {};
+  for (const a of assignments) {
+    if (!byLevel[a.carouselPos]) byLevel[a.carouselPos] = [];
+    byLevel[a.carouselPos].push(a);
   }
 
-  // Shuffle sprite indices so random sprites are picked when sprites > levels
-  const spriteOrder = secondaryStates.map((_, i) => i);
-  for (let i = spriteOrder.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [spriteOrder[i], spriteOrder[j]] = [spriteOrder[j], spriteOrder[i]];
-  }
+  for (const [posKey, sprites] of Object.entries(byLevel)) {
+    const carouselPos = Number(posKey);
+    const resolved = sprites.length === 1
+      ? [{ ...sprites[0], direction: -heroDir, spawnX: heroDir === 1 ? W : 0 }] // single: edge spawn, opposite dir
+      : resolveQuadrantsForLevel(sprites, heroDir);                               // multi: quadrant spawn
 
-  assignedSpriteDir = spriteDir;
-  const count = Math.min(secondaryStates.length, nonHomeCarouselPositions.length);
-
-  for (let rank = 0; rank < count; rank++) {
-    const s = secondaryStates[spriteOrder[rank]];
-    s.assigned = true;   // reserved — activates when hero enters this level
-    s.active = false;
-    s.carouselPos = nonHomeCarouselPositions[rank];
-    s.frameIndex = 0;
-    s.frameTimer = 0;
-    const lvlId = levelData[state.carousel[s.carouselPos]]?.id;
-    const stop = nonHomeCarouselPositions[rank] - state.carousel.indexOf(state.homeIndex);
-    console.log(`[secondary] sprite ${rank + 1} assigned → stop ${stop} (id="${lvlId}") — will walk ${spriteDir === -1 ? "←" : "→"} when hero arrives`);
+    for (const sp of resolved) {
+      const s = secondaryStates[sp.spriteIdx];
+      s.assigned   = true;
+      s.active     = false;
+      s.carouselPos = carouselPos;
+      s.direction  = sp.direction;
+      s.spawnX     = sp.spawnX;
+      s.frameIndex = 0;
+      s.frameTimer = 0;
+      const lvlId = levelData[state.carousel[carouselPos]]?.id;
+      const stop  = carouselPos - homePos;
+      console.log(`[secondary] sprite ${sp.spriteIdx + 1} → stop ${stop} (id="${lvlId}") dir=${sp.direction} x=${sp.spawnX}`);
+    }
   }
 }
 
-// Activates any sprite assigned to the current level the moment the hero enters it.
+// Returns the effectiveDepthOffset for sprite i entering carouselPos.
+// Range: [2, cfg.depthOffset]. New sprite gets (min co-occupant depth - 2).
+// If that falls below 2, falls back to cfg.depthOffset.
+function computeEffectiveDepthOffset(i, carouselPos) {
+  const cfg = SECONDARY_SPRITES[i];
+  const defaultDepth = typeof cfg.depthOffset === "number" ? cfg.depthOffset : 0;
+  const coOccupants = secondaryStates.filter((s, j) => j !== i && s.active && s.carouselPos === carouselPos);
+  if (!coOccupants.length) return defaultDepth;
+  const minDepth = Math.min(...coOccupants.map(s => s.effectiveDepthOffset ?? defaultDepth));
+  const candidate = minDepth - 2;
+  return candidate >= 2 ? candidate : defaultDepth;
+}
+
+// Activates sprites assigned to the current level when the hero enters it.
 function maybeActivateSpritesForCurrentLevel() {
   if (!secondaryActivated) return;
-  const spawnX = assignedSpriteDir === -1 ? W : 0;
-  for (const s of secondaryStates) {
+  for (let i = 0; i < secondaryStates.length; i++) {
+    const s = secondaryStates[i];
     if (s.active || !s.assigned) continue;
     if (state.carousel[s.carouselPos] !== state.levelIndex) continue;
     s.active = true;
-    s.x = spawnX;
-    s.direction = assignedSpriteDir;
-    s.facing = assignedSpriteDir;
-    console.log(`[secondary] sprite activated on level "${currentLevel()?.id}"`);
+    s.x      = s.spawnX ?? (s.direction === -1 ? W : 0);
+    s.facing = s.direction;
+    s.effectiveDepthOffset = computeEffectiveDepthOffset(i, s.carouselPos);
+    console.log(`[secondary] activated on level "${currentLevel()?.id}" x=${Math.round(s.x)} dir=${s.direction} depth=${s.effectiveDepthOffset}`);
   }
 }
 
 // Moves all active secondary sprites autonomously every frame.
-// Sprites traverse the carousel circularly, in sync with how the hero moves.
+// Sprites travel in their direction until they reach HOME, then drop out.
 function updateSecondarySprites(dt) {
   const n = state.carousel.length;
   for (let i = 0; i < secondaryStates.length; i++) {
@@ -1055,19 +1182,31 @@ function updateSecondarySprites(dt) {
       s.frameIndex = (s.frameIndex + 1) % (s.frames.length || 1);
     }
 
-    // Switch levels when sprite is exactly one sprite-width past the edge.
-    // s.x + W / s.x - W preserves the overshoot so the leading edge of the
-    // sprite is right at the entry edge of the new level — seamless in both directions.
     const sizeRatio = (typeof cfg.sizeRatio === "number" && cfg.sizeRatio > 0) ? cfg.sizeRatio : 1;
     const spriteW = s.natH > 0
       ? Math.round(s.natW * Math.round((player.renderH || 56) * sizeRatio) / s.natH)
       : 80;
+
     if (s.direction === 1 && s.x > W + spriteW) {
-      s.carouselPos = (s.carouselPos + 1) % n;
-      s.x = -spriteW; // enter new level from left edge, matching drop-in feel
+      const nextPos = (s.carouselPos + 1) % n;
+      const sameAsHero = heroDirection !== 0 && s.direction === heroDirection;
+      if (sameAsHero || state.carousel[nextPos] === state.homeIndex) {
+        s.active = false; // same direction as hero, or reached HOME — drop out
+      } else {
+        s.carouselPos = nextPos;
+        s.x = -spriteW;
+        s.effectiveDepthOffset = computeEffectiveDepthOffset(i, s.carouselPos);
+      }
     } else if (s.direction === -1 && s.x < -spriteW) {
-      s.carouselPos = (s.carouselPos - 1 + n) % n;
-      s.x = W + spriteW; // enter new level from right edge, matching drop-in feel
+      const nextPos = (s.carouselPos - 1 + n) % n;
+      const sameAsHero = heroDirection !== 0 && s.direction === heroDirection;
+      if (sameAsHero || state.carousel[nextPos] === state.homeIndex) {
+        s.active = false; // same direction as hero, or reached HOME — drop out
+      } else {
+        s.carouselPos = nextPos;
+        s.x = W + spriteW;
+        s.effectiveDepthOffset = computeEffectiveDepthOffset(i, s.carouselPos);
+      }
     }
   }
 }
@@ -1396,8 +1535,9 @@ function drawSecondary() {
       continue;
     }
     const x = Math.round(s.x);
-    // depthOffset: 0 = same floor as hero. Positive = further behind (feet move UP on screen).
-    const depthOffset = typeof cfg.depthOffset === "number" ? cfg.depthOffset : 0;
+    // Use runtime-adjusted depth if available, else fall back to JSON default.
+    const depthOffset = typeof s.effectiveDepthOffset === "number" ? s.effectiveDepthOffset
+                      : typeof cfg.depthOffset === "number" ? cfg.depthOffset : 0;
     const y = Math.round(FLOOR_Y - depthOffset - drawH - FEET_FUDGE_PX);
 
     ctx.save();
@@ -1933,8 +2073,8 @@ function updateAndDrawHome(dt) {
 
     // Deactivate all secondary sprites — new random assignment on next departure
     secondaryActivated = false;
-    assignedSpriteDir = 0;
-    for (const s of secondaryStates) { s.active = false; s.assigned = false; }
+    heroDirection = 0;
+    for (const s of secondaryStates) { s.active = false; s.assigned = false; s.spawnX = undefined; s.direction = 0; s.effectiveDepthOffset = undefined; }
 
     // Reset radio fully so it can warm up fresh on next Enter
     RADIO.warmStarted = false;
@@ -2157,7 +2297,6 @@ function applyDebugParams() {
       console.warn(`[debug] sprite id=${spriteId} not found in sprites.json`);
     } else {
       secondaryActivated = true;
-      assignedSpriteDir = -1; // walk left by default
       const s = secondaryStates[cfgIdx];
       s.assigned = true;
       s.active = true;
@@ -2167,7 +2306,8 @@ function applyDebugParams() {
       s.facing = -1;
       s.frameIndex = 0;
       s.frameTimer = 0;
-      console.log(`[debug] sprite id=${spriteId} activated on level "${currentLevel()?.id}"`);
+      s.effectiveDepthOffset = computeEffectiveDepthOffset(cfgIdx, s.carouselPos);
+      console.log(`[debug] sprite id=${spriteId} activated on level "${currentLevel()?.id}" depth=${s.effectiveDepthOffset}`);
     }
   }
 }
