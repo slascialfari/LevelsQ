@@ -35,9 +35,9 @@
     {
       "id": 5,
       "count": 48,
-      "fps": 16,
-      "speed": 40,
-      "sizeRatio": 1.0,
+      "fps": 13,
+      "speed": 45,
+      "sizeRatio": 1.1,
       "depthOffset": 11
     },
     {
@@ -67,8 +67,8 @@
         {
       "id": 9,
       "count": 25,
-      "fps": 18,
-      "speed": 45,
+      "fps": 16,
+      "speed": 48,
       "sizeRatio": 1.0,
       "depthOffset": 11
     }
