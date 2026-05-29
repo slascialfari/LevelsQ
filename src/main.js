@@ -495,6 +495,8 @@ window.addEventListener("scroll", () => RADIO.placeWidget(), { passive: true });
 
 // =========================
 
+let CAROUSEL_EXCLUDED_LEVELS = []; // loaded from data/carousel.json — edit excludedLevels there
+
 let levelData = [];
 let heroIdleFrames = [];
 let heroWalkFrames = [];
@@ -606,9 +608,12 @@ function isHomeIndex(i) {
 
 // ---------- Carousel helpers ----------
 function nonHomeIndices() {
+  const isDebug = new URLSearchParams(window.location.search).get("debug") === "true";
   const out = [];
   for (let i = 0; i < levelData.length; i++) {
-    if (!isHomeIndex(i)) out.push(i);
+    if (isHomeIndex(i)) continue;
+    if (!isDebug && CAROUSEL_EXCLUDED_LEVELS.includes(levelData[i]?.id)) continue;
+    out.push(i);
   }
   return out;
 }
@@ -929,6 +934,13 @@ async function loadSpritesConfig() {
   const json = await res.json();
   SECONDARY_SPRITES = Array.isArray(json.secondarySprites) ? json.secondarySprites : [];
   console.log("[sprites.json] loaded", SECONDARY_SPRITES.length, "secondary sprite(s):", SECONDARY_SPRITES.map(c => `id=${c.id} levelId=${c.levelId}`));
+}
+
+async function loadCarouselConfig() {
+  const res = await fetch("data/carousel.json");
+  if (!res.ok) throw new Error(`Failed to fetch data/carousel.json (${res.status})`);
+  const json = await res.json();
+  CAROUSEL_EXCLUDED_LEVELS = Array.isArray(json.excludedLevels) ? json.excludedLevels : [];
 }
 
 function loadSecondaryFrameSet(folder, count) {
@@ -2314,7 +2326,7 @@ function applyDebugParams() {
 
 // ---------- Boot ----------
 // sprites.json must load before loadAllSecondarySprites so SECONDARY_SPRITES is populated
-loadSpritesConfig()
+Promise.all([loadSpritesConfig(), loadCarouselConfig()])
   .then(() => Promise.all([
     loadLevels(),
     loadSprites(),
