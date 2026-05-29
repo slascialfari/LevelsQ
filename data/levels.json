@@ -272,6 +272,52 @@
           "parallax": true
         }
       ]
+    },
+    {
+      "id": "007",
+      "name": "Level 007",
+      "category": "common",
+      "rarity": 1,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 18,
+          "randomInterval": true,
+          "minIntervalMs": 1000,
+          "maxIntervalMs": 3000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay02",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 21,
+          "startMs": 500,
+          "randomInterval": true,
+          "minIntervalMs": 1000,
+          "maxIntervalMs": 2500,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "pingpong",
+          "fps": 7,
+          "count": 11,
+          "startMs": 300,
+          "randomInterval": true,
+          "minIntervalMs": 1000,
+          "maxIntervalMs": 2500,
+          "showFirstFrame": true
+        }
+      ]
     }
   ]
 }
