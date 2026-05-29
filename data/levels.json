@@ -318,6 +318,42 @@
           "showFirstFrame": true
         }
       ]
+    },
+    {
+      "id": "008",
+      "name": "Level 008",
+      "category": "common",
+      "rarity": 1,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 17,
+          "randomInterval": true,
+          "minIntervalMs": 1000,
+          "maxIntervalMs": 3000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay02",
+          "type": "static"
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 16,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 4000,
+          "showFirstFrame": true
+        }
+      ]
     }
   ]
 }
