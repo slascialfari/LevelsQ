@@ -178,7 +178,15 @@
       "underlays": [
         {
           "folder": "underlay01",
-          "type": "static"
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 24,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 6000,
+          "showFirstFrame": true
         },
         {
           "folder": "underlay02",
@@ -186,11 +194,11 @@
           "rendering": "intermittent",
           "animation": "loop",
           "fps": 12,
-          "count": 24,
-          "startMs": 2000,
+          "count": 18,
+          "startMs": 50,
           "randomInterval": true,
-          "minIntervalMs": 4000,
-          "maxIntervalMs": 8000,
+          "minIntervalMs": 1000,
+          "maxIntervalMs": 3000,
           "showFirstFrame": true
         },
         {
@@ -200,32 +208,22 @@
           "animation": "loop",
           "fps": 12,
           "count": 11,
-          "startMs": 2500,
           "randomInterval": true,
-          "minIntervalMs": 2000,
-          "maxIntervalMs": 5000,
+          "minIntervalMs": 1000,
+          "maxIntervalMs": 3000,
           "showFirstFrame": true
         },
         {
           "folder": "underlay04",
           "type": "frames",
-          "rendering": "intermittent",
-          "animation": "loop",
-          "fps": 12,
-          "count": 18,
-          "startMs": 1000,
-          "randomInterval": true,
-          "minIntervalMs": 2000,
-          "maxIntervalMs": 5000,
-          "showFirstFrame": true
-        },
-        {
-          "folder": "underlay05",
-          "type": "frames",
           "rendering": "loop",
           "animation": "loop",
           "fps": 12,
           "count": 5
+        },
+        {
+          "folder": "underlay05",
+          "type": "static"
         }
       ]
     },
