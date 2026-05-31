@@ -92,11 +92,26 @@
         {
           "folder": "underlay01",
           "type": "frames",
-          "rendering": "loop",
+          "rendering": "intermittent",
           "animation": "loop",
           "fps": 12,
-          "count": 72,
-          "showFirstFrame": false
+          "count": 30,
+          "startMs": 500,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 8000,
+          "showFirstFrame": true
+        },
+        {
+          "folder": "underlay02",
+          "type": "frames",
+          "rendering": "intermittent",
+          "animation": "loop",
+          "fps": 12,
+          "count": 26,
+          "randomInterval": true,
+          "minIntervalMs": 2000,
+          "maxIntervalMs": 4000
         }
       ],
       "overlays": [
