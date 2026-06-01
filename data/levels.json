@@ -264,14 +264,6 @@
         {
           "folder": "underlay02",
           "type": "static"
-        },
-        {
-          "folder": "underlay03",
-          "type": "frames",
-          "rendering": "loop",
-          "animation": "pingpong",
-          "fps": 4,
-          "count": 6
         }
       ],
       "overlays": [
