@@ -1435,13 +1435,13 @@ function updateAndDrawLayer(layer, dt, levelTime) {
   }
 }
 
-// Draw order: underlay[max]...underlay[1] → hero → overlay[1]...overlay[max]
+// Draw order: underlay[1]...underlay[max] → hero → overlay[1]...overlay[max]
 function drawUnderlays(dt) {
   const assets = currentLevelAssets();
   if (!assets?.underlays?.length) return;
   const lt = (performance.now() - (state.levelEnteredAt ?? performance.now())) / 1000;
-  // Draw from highest index (furthest back) to lowest (closest to hero)
-  for (let i = assets.underlays.length - 1; i >= 0; i--) {
+  // Draw from lowest index (furthest back) to highest (closest to hero)
+  for (let i = 0; i < assets.underlays.length; i++) {
     updateAndDrawLayer(assets.underlays[i], dt, lt);
   }
 }
