@@ -612,6 +612,7 @@ function nonHomeIndices() {
   const out = [];
   for (let i = 0; i < levelData.length; i++) {
     if (isHomeIndex(i)) continue;
+    if (levelData[i]?.isTest) continue; // test levels never enter carousel
     if (!isDebug && CAROUSEL_EXCLUDED_LEVELS.includes(levelData[i]?.id)) continue;
     out.push(i);
   }

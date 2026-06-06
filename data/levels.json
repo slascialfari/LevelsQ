@@ -84,6 +84,11 @@
       }
     },
     {
+      "id": "000",
+      "name": "Test Level",
+      "isTest": true
+    },
+    {
       "id": "001",
       "name": "Level 001",
       "category": "common",
