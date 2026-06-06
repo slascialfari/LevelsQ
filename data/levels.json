@@ -84,6 +84,11 @@
       }
     },
     {
+      "id": "000",
+      "name": "Test Level",
+      "isTest": true
+    },
+    {
       "id": "001",
       "name": "Level 001",
       "category": "common",
@@ -264,14 +269,6 @@
         {
           "folder": "underlay02",
           "type": "static"
-        },
-        {
-          "folder": "underlay03",
-          "type": "frames",
-          "rendering": "loop",
-          "animation": "pingpong",
-          "fps": 4,
-          "count": 6
         }
       ],
       "overlays": [
@@ -365,6 +362,106 @@
           "minIntervalMs": 2000,
           "maxIntervalMs": 4000,
           "showFirstFrame": true
+        }
+      ]
+    },
+    {
+      "id": "009",
+      "name": "Level 009",
+      "category": "common",
+      "rarity": 1,
+      "underlays": [
+        {
+          "folder": "underlay01",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 4
+        },
+        {
+          "folder": "underlay02",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 89
+        },
+        {
+          "folder": "underlay03",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 89
+        },
+        {
+          "folder": "underlay04",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 89
+        },
+        {
+          "folder": "underlay05",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 184
+        },
+        {
+          "folder": "underlay06",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 184
+        },
+        {
+          "folder": "underlay07",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 225
+        },
+        {
+          "folder": "underlay08",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 118
+        },
+        {
+          "folder": "underlay09",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 95
+        },
+        {
+          "folder": "underlay10",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 8,
+          "count": 95
+        },
+        {
+          "folder": "underlay11",
+          "type": "static"
+        },
+        {
+          "folder": "underlay12",
+          "type": "frames",
+          "rendering": "loop",
+          "animation": "loop",
+          "fps": 2,
+          "count": 6
         }
       ]
     }
