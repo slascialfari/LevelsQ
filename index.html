@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover" />
     <link rel="stylesheet" href="styles/main.css" />
 
     <style>
@@ -68,6 +68,18 @@
       <div class="station" id="radioStationName">—</div>
       <div class="status" id="radioStatus">Loading…</div>
     </div>
+
+    <!-- Rotate-to-landscape prompt (mobile portrait only) -->
+    <div id="rotate-overlay">
+      <div class="rotate-phone"></div>
+      <p>Rotate your device to play</p>
+    </div>
+
+    <!-- Mobile tap-to-start button (HOME phase 0 only) -->
+    <div id="mobile-enter-btn">Tap here to go for a walk</div>
+
+    <!-- Mobile radio button (top-left of canvas, mobile only) -->
+    <button id="radioMobileBtn" aria-label="Next radio station">♫</button>
 
     <script type="module" src="src/main.js"></script>
   </body>

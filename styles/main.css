@@ -31,3 +31,109 @@ canvas {
   text-align: center;
   user-select: none;
 }
+
+/* ---- MOBILE ---- */
+
+.is-mobile body {
+  overflow: hidden;
+  touch-action: none;
+}
+
+.is-mobile canvas {
+  /* Scale canvas to fill landscape viewport while preserving 16:9 */
+  width: min(100vw, 177.78vh);
+  height: min(56.25vw, 100vh);
+  border: none;
+  image-rendering: auto;
+}
+
+/* Hide full desktop radio widget on mobile */
+.is-mobile #radioWidget {
+  display: none !important;
+}
+
+/* Portrait lock overlay */
+#rotate-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #0b0b0b;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  color: #fff;
+  font-size: 18px;
+  text-align: center;
+  padding: 32px;
+}
+
+#rotate-overlay p {
+  margin: 0;
+  opacity: 0.85;
+}
+
+.rotate-phone {
+  width: 36px;
+  height: 56px;
+  border: 3px solid #fff;
+  border-radius: 6px;
+  position: relative;
+  animation: rotate-hint 2s ease-in-out infinite;
+}
+
+.rotate-phone::after {
+  content: '';
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.6;
+}
+
+@keyframes rotate-hint {
+  0%, 40%  { transform: rotate(0deg);   opacity: 1; }
+  60%, 100% { transform: rotate(-90deg); opacity: 1; }
+}
+
+/* Mobile enter button — visual only (pointer-events:none, touch falls through to canvas) */
+#mobile-enter-btn {
+  display: none;
+  position: fixed;
+  transform: translateX(-50%);
+  padding: 14px 28px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 16px;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+  user-select: none;
+  z-index: 9998;
+  white-space: nowrap;
+}
+
+/* Mobile radio button — small, top-left of canvas */
+#radioMobileBtn {
+  display: none;
+  position: fixed;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  z-index: 9999;
+  touch-action: manipulation;
+  padding: 0;
+}

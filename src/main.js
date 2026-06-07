@@ -490,7 +490,7 @@ const RADIO = {
 };
 
 // keep widget aligned when page scrolls/resizes (important if you have centered layout)
-window.addEventListener("resize", () => RADIO.placeWidget());
+window.addEventListener("resize", () => { RADIO.placeWidget(); repositionMobileUI(); checkOrientation(); });
 window.addEventListener("scroll", () => RADIO.placeWidget(), { passive: true });
 
 // =========================
@@ -585,6 +585,100 @@ window.addEventListener("keyup", (e) => {
   if (e.key === "ArrowRight") input.right = false;
   if (e.key === "Enter") input.enter = false;
 });
+
+// ---- MOBILE ----
+const isMobile = navigator.maxTouchPoints > 0;
+
+if (isMobile) document.body.classList.add("is-mobile");
+
+function checkOrientation() {
+  const el = document.getElementById("rotate-overlay");
+  if (!el) return;
+  el.style.display = (isMobile && window.innerHeight > window.innerWidth) ? "flex" : "none";
+}
+
+function repositionMobileUI() {
+  if (!isMobile) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return;
+
+  const enterBtn = document.getElementById("mobile-enter-btn");
+  if (enterBtn) {
+    enterBtn.style.left = `${rect.left + rect.width / 2}px`;
+    enterBtn.style.top  = `${rect.bottom - 80}px`;
+  }
+
+  const radioBtn = document.getElementById("radioMobileBtn");
+  if (radioBtn) {
+    radioBtn.style.left = `${rect.left + 10}px`;
+    radioBtn.style.top  = `${rect.top + 10}px`;
+  }
+}
+
+function syncMobileUI() {
+  if (!isMobile) return;
+
+  const enterBtn = document.getElementById("mobile-enter-btn");
+  if (enterBtn) {
+    const show = isHomeLevel() && HOME.active && HOME.phase === 0;
+    if (enterBtn._shown !== show) {
+      enterBtn._shown = show;
+      enterBtn.style.display = show ? "block" : "none";
+      if (show) repositionMobileUI();
+    }
+  }
+
+  const radioBtn = document.getElementById("radioMobileBtn");
+  if (radioBtn) {
+    const show = RADIO.liveEnabled;
+    if (radioBtn._shown !== show) {
+      radioBtn._shown = show;
+      radioBtn.style.display = show ? "flex" : "none";
+      if (show) repositionMobileUI();
+    }
+  }
+}
+
+window.addEventListener("orientationchange", () => {
+  setTimeout(() => { checkOrientation(); repositionMobileUI(); }, 100);
+});
+
+document.getElementById("radioMobileBtn")?.addEventListener("click", () => {
+  RADIO.switchByKey(+1);
+});
+
+if (isMobile) {
+  canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    for (const t of e.changedTouches) {
+      const cx = (t.clientX - rect.left) / rect.width * W;
+      if (cx < W / 2) input.left = true; else input.right = true;
+    }
+    input.enterPressedThisFrame = true;
+    input.arrowPressedThisFrame = true;
+  }, { passive: false });
+
+  canvas.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    let hasLeft = false, hasRight = false;
+    for (const t of e.targetTouches) {
+      const cx = (t.clientX - rect.left) / rect.width * W;
+      if (cx < W / 2) hasLeft = true; else hasRight = true;
+    }
+    if (!hasLeft) input.left = false;
+    if (!hasRight) input.right = false;
+  }, { passive: false });
+
+  canvas.addEventListener("touchcancel", () => {
+    input.left = false;
+    input.right = false;
+  });
+}
+
+checkOrientation();
+// ---- END MOBILE ----
 
 // ---------- Helpers ----------
 function clamp(v, min, max) {
@@ -2158,6 +2252,8 @@ function loop(t) {
     // keep radio widget tracking canvas position even while hidden
     if (RADIO.loaded) RADIO.placeWidget();
 
+    syncMobileUI();
+
     input.enterPressedThisFrame = false;
     input.arrowPressedThisFrame = false;
 
@@ -2251,6 +2347,8 @@ if (vx < 0 && player.x <= -off) {
   }
 
   drawPopup(dt);
+
+  syncMobileUI();
 
   input.enterPressedThisFrame = false;
   input.arrowPressedThisFrame = false;
