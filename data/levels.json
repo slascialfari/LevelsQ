@@ -254,6 +254,10 @@
       "rarity": 2,
       "underlays": [
         {
+          "folder": "underlay02",
+          "type": "static"
+        },
+        {
           "folder": "underlay01",
           "type": "frames",
           "rendering": "intermittent",
@@ -265,10 +269,6 @@
           "minIntervalMs": 2000,
           "maxIntervalMs": 6000,
           "showFirstFrame": true
-        },
-        {
-          "folder": "underlay02",
-          "type": "static"
         }
       ],
       "overlays": [
